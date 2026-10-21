@@ -74,10 +74,15 @@ class TestUtils(unittest.TestCase):
         self.assertIn("ffmpeg", deps)
         self.assertIn("ffprobe", deps)
         self.assertIn("impersonate", deps)
+        self.assertIn("playwright", deps)
 
     def test_check_impersonate_support(self):
         from src.utils import check_impersonate_support
         self.assertTrue(check_impersonate_support())
+
+    def test_check_playwright_support(self):
+        from src.utils import check_playwright_support
+        self.assertTrue(check_playwright_support())
 
 
 if __name__ == "__main__":

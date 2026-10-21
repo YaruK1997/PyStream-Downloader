@@ -25,7 +25,7 @@
        | 容器內部環境 (pystream-downloader:latest)                |
        | - 基礎映像檔: python:3.10-slim                           |
        | - 系統套件: FFmpeg 6.x+, ca-certificates, curl           |
-       | - Python 環境: yt-dlp, psutil, curl_cffi                 |
+       | - Python 環境: yt-dlp, psutil, curl_cffi, playwright     |
        | - 安全身份: 非 root 帳號 appuser (UID 1000)              |
        | - 健康檢查 (Healthcheck): 探針檢測 FFmpeg 與模組完整性   |
        +─────────────────────────────────────────────────────────+
@@ -83,10 +83,11 @@ docker-compose run --rm -d pystream-downloader "https://example.com/stream" --wa
 
 ### 安裝與啟動
 ```bash
-# 1. 安裝相依套件
+# 1. 安裝相依套件與 Playwright 嗅探用 Chromium 瀏覽器
 pip install -r requirements.txt
+playwright install chromium
 
-# 2. 啟動程式
+# 2. 啟動程式 (支援 YouTube、Twitch 與動態混淆站點如 MissAV)
 python main.py "https://example.com/stream"
 ```
 
@@ -97,7 +98,7 @@ python main.py "https://example.com/stream"
 容器內建自定義 Healthcheck 探針：
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD python -c "import yt_dlp, psutil, curl_cffi, shutil; assert shutil.which('ffmpeg')" || exit 1
+    CMD python -c "import yt_dlp, psutil, curl_cffi, playwright, shutil; assert shutil.which('ffmpeg')" || exit 1
 ```
 
 檢驗指令：

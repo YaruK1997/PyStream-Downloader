@@ -202,6 +202,28 @@ class TestStage2SelfCheck(unittest.TestCase):
         self.assertEqual(quality, "1080p")
         self.assertIn("Cookie", headers)
 
+    def test_11_sniffer_availability_and_fallback(self):
+        """Verify HeadlessStreamSniffer availability and StreamExtractor fallback mechanism."""
+        from src.sniffer import HeadlessStreamSniffer, SniffResult
+        from src.utils import check_playwright_support
+
+        self.assertTrue(check_playwright_support())
+        sniffer = HeadlessStreamSniffer(timeout=5)
+        self.assertTrue(sniffer.is_available())
+
+        # Test automatic fallback when yt-dlp raises Unsupported URL
+        extractor = StreamExtractor("https://missav.ai/sample", sniff_mode="auto")
+        mock_sniff = SniffResult(
+            stream_url="https://surrit.com/test.m3u8",
+            headers={"User-Agent": "TestUA"},
+            title="Sniffed Stream",
+        )
+        with patch.object(HeadlessStreamSniffer, "sniff", return_value=mock_sniff):
+            with patch("yt_dlp.YoutubeDL.extract_info", side_effect=Exception("ERROR: Unsupported URL")):
+                info = extractor.extract_metadata()
+                self.assertEqual(info["url"], "https://surrit.com/test.m3u8")
+                self.assertEqual(info["title"], "Sniffed Stream")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,6 +55,10 @@
 | **TC-DL-03** | `tests/test_downloader.py` | FFmpeg `-headers` 組裝與 CRLF 注入安全性防禦 | 格式化 `\r\n` 串列且置於 `-i` 之前；遇換行字元時阻斷並拋出 `ValueError`。 |
 | **TC-CL-01** | `tests/test_cli.py` | CLI 參數解析、`--version` 顯示、`--impersonate` 與 `--cookies-from-browser` | 驗證預設值（chrome）與自訂瀏覽器設定解析無誤。 |
 | **TC-UT-03** | `tests/test_utils.py` | 系統依賴檢測加入 `check_impersonate_support()` | 正確識別 `curl_cffi` 與 `yt-dlp` 指紋庫就緒狀態。 |
+| **TC-SN-01** | `tests/test_sniffer.py` | `HeadlessStreamSniffer` 網路攔截與 m3u8/mpd 串流直鏈辨識 | 驗證 Chromium 啟動、`page.on("request")` 事件攔截與標頭抽取。 |
+| **TC-SN-02** | `tests/test_extractor.py` | `StreamExtractor` 遇 `Unsupported URL` 自動觸發 Sniffer 回退 | 驗證 yt-dlp 失敗時自動接軌 Playwright 嗅探器並獲取可用格式。 |
+| **TC-CL-02** | `tests/test_cli.py` | CLI `--sniff`（auto/always/never）與 `--sniff-timeout` 參數解析 | 驗證動態嗅探模式與自訂超時解析正確。 |
+| **TC-UT-04** | `tests/test_utils.py` | 系統依賴檢測加入 `check_playwright_support()` | 正確檢驗 Playwright 庫與本機 Chromium 二進位執行檔可用性。 |
 
 ---
 

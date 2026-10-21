@@ -18,18 +18,65 @@
     └── 部署環境: Dockerfile / Docker Compose / 跨平台部署腳本
             │
             ▼ (遭遇議題: 第三方網頁 Cloudflare WAF Anti-Bot HTTP 403 阻斷)
-  [ v1.1.0 (2026-10-21) 反爬蟲穿透與安全強化升級 ] ─── (當前版本)
+  [ v1.1.0 (2026-10-21) 反爬蟲穿透與安全強化升級 ]
     ├── 核心修復: 整合 curl_cffi 瀏覽器 TLS 握手指紋偽裝 (Impersonation)
     ├── 自動防禦: generic:impersonate 自動注入 + 瀏覽器 Cookies 提取
     ├── 串流連續性: HTTP Headers 貫穿傳遞至 FFmpeg (-headers)，杜絕分片 403
     ├── 安全加固: HTTP 標頭 CRLF 注入嚴格阻斷防禦
     └── 專案規範: CLI --version 支援、測試案例擴充至 41 項全數通過
+            │
+            ▼ (遭遇議題: 動態 JS 混淆站點觸發 Unsupported URL)
+  [ v1.2.0 (2026-10-21) 無頭瀏覽器動態串流嗅探升級 (The Stream Detector 引擎) ] ─── (當前版本)
+    ├── 方案 A 實作: 整合 Playwright 無頭 Chromium 瀏覽器
+    ├── 核心功能: 網路層即時攔截 (.m3u8 / .mpd)，抽取 Master Playlist 與即時 Headers
+    ├── 智慧回退: yt-dlp 遇 Unsupported URL 時自動接軌嗅探器，無縫串接畫質選擇
+    ├── 參數擴充: CLI 支援 --sniff (auto/always/never) 與 --sniff-timeout
+    └── 專案規範: 版本升級至 v1.2.0，測試案例擴展至 49 項全數通過
 +-------------------------------------------------------------------------------+
 ```
 
 ---
 
 ## 2. 版本詳細異動清單 (Version Details)
+
+### [v1.2.0] - 2026-10-21
+
+#### 🎯 核心修訂主旨
+針對未被 `yt-dlp` 原生支援、且使用前端 JavaScript 動態混淆加密（如 Dean Edwards packer 混淆加密）的各類影音網站，落實**方案 A（Playwright 無頭瀏覽器動態嗅探器 - The Stream Detector 引擎）**，使下載器具備通殺動態串流網站的能力。
+
+#### 🚀 新增功能 (Features)
+1. **無頭瀏覽器串流嗅探模組 (`src/sniffer.py` / `HeadlessStreamSniffer`)**
+   - 封裝 Playwright 無頭 Chromium 實例，模擬真實瀏覽器載入目標網頁並執行前端混淆 JavaScript。
+   - 透過 `page.on("request")` 事件即時攔截播放器發出的 `.m3u8` 與 `.mpd` 請求。
+   - 同步獲取該請求對應的即時 HTTP Request Headers（User-Agent、Referer、Cookie、Origin）。
+   - 自動過濾並鎖定 `master.m3u8` 或最高優先級之 Playlist 串流直鏈。
+2. **智慧自動回退鏈路 (Seamless Fallback Pipeline)**
+   - 在 `src/extractor.py` 中整合嗅探器：
+     - 若 yt-dlp 拋出 `Unsupported URL` 或判定非標準網站時，系統自動提示並切換至無頭瀏覽器進行動態嗅探。
+     - 嗅探成功取得 `.m3u8` 直鏈後，再度交由 yt-dlp 進行二級格式分解，使用者依然享有互動式多解析度選單（1080p, 720p 等）。
+     - 嗅探獲得之 Headers 自動傳遞至 `FFmpegDownloader`，徹底解決媒體分片 403 阻斷。
+3. **CLI 參數擴充**
+   - `--sniff {auto,always,never}`：控制動態嗅探觸發策略（預設 `auto`：遇不支援網站自動觸發；`always`：強制嗅探；`never`：停用）。
+   - `--sniff-timeout <SEC>`：自訂無頭嗅探最長等候秒數（預設 15 秒）。
+4. **版本號管理**
+   - 版本號躍升為 `1.2.0`，CLI `-v` / `--version` 輸出 `pystream-downloader 1.2.0`。
+
+#### 🛡️ 安全性加固 (Security Hardening)
+1. **沙盒隔離與暫時性上下文 (CWE-250)**
+   - 每次嗅探均使用全新且獨立之 `BrowserContext`（相當於無痕無狀態視窗），不保留快取與個人資料。
+2. **防範資源耗盡與殭屍行程 (CWE-400)**
+   - `HeadlessStreamSniffer` 採用 Context Manager 與 `finally: browser.close()`，保證無論任務超時或例外終止，背景 Chromium 進程皆被 100% 關閉。
+   - 一旦偵測到目標串流立即早退釋放瀏覽器，大幅節約 CPU 與記憶體。
+
+#### 🧪 測試與驗證擴充 (Testing & Quality)
+- 單元與整合測試案例由 41 項增至 **49 項**（+8 項）：
+  - `tests/test_sniffer.py`: 建立 Sniffer 初始化、結果封裝、網路攔截模擬與依賴缺失檢查（4 項）。
+  - `tests/test_extractor.py`: 新增 Unsupported URL 自動回退與 Never 模式阻斷測試（2 項）。
+  - `tests/test_cli.py`: 新增 `--sniff` 與 `--sniff-timeout` 參數解析測試（1 項）。
+  - `tests/test_utils.py`: 新增 `check_playwright_support` 模組支援度測試（1 項）。
+  - `tests/test_stage2_self_check.py`: 階段 2 自檢項目擴增至 11 項全數通過。
+
+---
 
 ### [v1.1.0] - 2026-10-21
 
@@ -49,25 +96,7 @@
    - `FFmpegDownloader` 於 `-i` 串流輸入前動態附加 `-headers` 參數，防止 FFmpeg 在下載 HLS/DASH TS 媒體分片時遭遇二次 403 阻斷。
 4. **版本號管理與 CLI 查詢**
    - 於 `src/__init__.py` 定義統一版本常數 `__version__ = "1.1.0"`。
-   - CLI 註冊 `-v` 與 `--version` 參數，執行即刻回傳版本字串：`pystream-downloader 1.1.0`。
-   - CLI 新增 `--impersonate` 參數，允許使用者切換不同模擬目標或傳入 `none` 關閉偽裝。
-
-#### 🛡️ 安全性加固 (Security Hardening)
-1. **CRLF 標頭注入防護 (CWE-113)**
-   - 在 `FFmpegDownloader._validate_and_sanitize_headers` 中對傳入的標頭鍵與值實施嚴格檢查。
-   - 凡包含 `\r` 或 `\n` 之標頭字元，立即引發 `ValueError` 強制終止，杜絕標頭走私（Header Smuggling）與非預期參數截斷。
-2. **優雅降級與依賴檢查 (Graceful Fallback)**
-   - `src/utils.py` 新增 `check_impersonate_support()`。
-   - 若執行環境未安裝 `curl_cffi`，系統於啟動時印出友善警示指引（`pip install curl_cffi`），並安全降級為標準網路模式，不影響一般無反爬蟲網站之正常解析。
-
-#### 🧪 測試與驗證擴充 (Testing & Quality)
-- 單元與整合測試案例由 29 項增至 **41 項**（+12 項）：
-  - `tests/test_cli.py`: 新增版本號與反爬蟲 CLI 參數解析測試。
-  - `tests/test_downloader.py`: 新增 `-headers` 組裝與 CRLF 注入阻斷防禦測試。
-  - `tests/test_extractor.py`: 新增 ImpersonateTarget、Generic 參數、Cookies 與標頭提取測試。
-  - `tests/test_watcher.py`: 新增開播輪詢防 403 偽裝參數注入測試。
-  - `tests/test_stage2_self_check.py`: 階段 2 全鏈路回歸冒煙自檢擴充至 10 項全數通過。
-  - `tests/test_utils.py`: 新增 `check_impersonate_support` 模組可用性檢測。
+   - CLI 註冊 `-v` 與 `--version` 參數。
 
 ---
 
@@ -88,27 +117,23 @@
 
 | 檔案路徑 | 變更類型 | 異動行數/重點摘要 |
 | :--- | :---: | :--- |
-| `src/__init__.py` | 修改 | 版本號升級至 `1.1.0`。 |
-| `requirements.txt` | 修改 | 新增 `curl_cffi>=0.7.0` 依賴。 |
-| `Dockerfile` | 修改 | 更新容器健康檢查探針（納入 `curl_cffi` 完整性校驗）。 |
-| `src/utils.py` | 修改 | 新增 `check_impersonate_support()` 與相依性檢查整合。 |
-| `src/extractor.py` | 修改 | 建構 `ImpersonateTarget`、`cookiesfrombrowser`、HTTP Headers 抽取。 |
-| `src/watcher.py` | 修改 | 開播輪詢器加入反爬蟲指紋偽裝與 Cookies 參數支援。 |
-| `src/downloader.py` | 修改 | 加入 `headers` 參數、`-headers` 格式化與 CRLF 注入防禦。 |
-| `src/cli.py` | 修改 | 新增 `-v/--version`、`--impersonate`、`--cookies-from-browser` 與標頭傳遞。 |
-| `tests/test_cli.py` | 修改 | 覆蓋 `--version`、`--impersonate` 與 `--cookies-from-browser` 驗證。 |
-| `tests/test_downloader.py` | 修改 | 覆蓋 `-headers` 組裝與 CRLF 注入例外攔截驗證。 |
-| `tests/test_extractor.py` | 修改 | 覆蓋 ImpersonateTarget、Cookies 與 `http_headers` 提取驗證。 |
-| `tests/test_watcher.py` | 修改 | 覆蓋 Watcher 反爬蟲選項組裝驗證。 |
-| `tests/test_utils.py` | 修改 | 覆蓋 `check_impersonate_support` 判定邏輯。 |
-| `tests/test_stage2_self_check.py` | 修改 | 自檢項目由 7 項擴展至 10 項（覆蓋偽裝與防注入）。 |
-| `docs/self_check.log` | 更新 | 記錄 10 項 Stage 2 自檢執行日誌（10/10 OK）。 |
-| `docs/01_spec.md` | 更新 | 補充 F6 功能規格、CLI 參數更新與 Cloudflare 邊界情境。 |
-| `docs/02_architecture.md` | 更新 | 補充反爬蟲穿透拓撲圖、介面規格與自檢策略更新。 |
-| `docs/03_test_plan.md` | 更新 | 擴展測試矩陣（新增 TC-EX-03, TC-EX-04, TC-DL-03, TC-CL-01, TC-UT-03）。 |
-| `docs/04_test_report.md` | 更新 | 更新測試日誌佐證與測試總數（41/41 PASS）。 |
-| `docs/05_security_audit.md` | 更新 | 新增 CRLF 標頭防護 (CWE-113) 與 Cookies 存取安全審計。 |
-| `docs/06_deployment_guide.md` | 更新 | 更新容器 Python 套件清單、健康檢查探針與排查指南。 |
-| `docs/07_changelog.md` | 新增 | 建立版本異動歷程、功能矩陣與軌跡追蹤報告。 |
-| `workflow.md` | 更新 | 交付產出清單納入 `docs/07_changelog.md`。 |
-
+| `src/__init__.py` | 修改 | 版本號升級至 `1.2.0`。 |
+| `requirements.txt` | 修改 | 新增 `playwright>=1.40.0` 依賴。 |
+| `Dockerfile` | 修改 | 安裝 Playwright 及 Chromium 二進位檔 (`playwright install chromium --with-deps`)。 |
+| `src/sniffer.py` | **新增** | 實作 `HeadlessStreamSniffer` 與 `SniffResult`，完成動態網路層串流攔截。 |
+| `src/utils.py` | 修改 | 新增 `check_playwright_support()` 支援度檢測。 |
+| `src/extractor.py` | 修改 | 整合 Sniffer 自動回退、二級格式分解與標頭合併機制。 |
+| `src/cli.py` | 修改 | 新增 `--sniff` 與 `--sniff-timeout` 參數及調度整合。 |
+| `tests/test_sniffer.py` | **新增** | 新增 Sniffer 初始化、結果封裝、事件攔截與依賴缺失測試 (4 項)。 |
+| `tests/test_extractor.py` | 修改 | 覆蓋 Unsupported URL 自動回退與 Never 模式測試。 |
+| `tests/test_cli.py` | 修改 | 覆蓋 `--version` (v1.2.0)、`--sniff` 與 `--sniff-timeout` 驗證。 |
+| `tests/test_utils.py` | 修改 | 覆蓋 `check_playwright_support()` 邏輯檢驗。 |
+| `tests/test_stage2_self_check.py` | 修改 | 自檢項目由 10 項擴展至 11 項（納入 Sniffer 整合檢測）。 |
+| `docs/self_check.log` | 更新 | 記錄 11 項 Stage 2 自檢執行日誌（11/11 OK）。 |
+| `docs/01_spec.md` | 更新 | 補充 F7 功能規格、CLI 參數更新與 Unsupported URL 邊界情境。 |
+| `docs/02_architecture.md` | 更新 | 新增 Sniffer 模組介面契約與動態串流嗅探拓撲圖。 |
+| `docs/03_test_plan.md` | 更新 | 擴展測試矩陣（新增 TC-SN-01, TC-SN-02, TC-CL-02, TC-UT-04）。 |
+| `docs/04_test_report.md` | 更新 | 更新測試日誌佐證與測試總數（49/49 PASS）。 |
+| `docs/05_security_audit.md` | 更新 | 新增無頭瀏覽器沙盒隔離與資源保護審查 (CWE-250 / CWE-400)。 |
+| `docs/06_deployment_guide.md` | 更新 | 更新 Playwright Chromium 安裝步驟與容器健康檢查探針。 |
+| `docs/07_changelog.md` | 更新 | 完整記錄 v1.2.0 版本變更里程碑、功能矩陣與軌跡。 |

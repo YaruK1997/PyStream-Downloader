@@ -93,11 +93,24 @@
   ```
 
 ### 模組 5: `src/utils.py` (`FileFinalizer`)
-- **核心職責**：Windows / Linux 檔名合法化清理、MP4 完整性驗證。
+- **核心職責**：Windows / Linux 檔名合法化清理、MP4 完整性驗證、相依套件與 Chromium 支援度檢查。
 - **公開介面**：
   ```python
   def sanitize_filename(name: str) -> str: ...
   def verify_mp4_integrity(filepath: str) -> bool: ...
+  def check_impersonate_support() -> bool: ...
+  def check_playwright_support() -> bool: ...
+  def check_system_dependencies() -> dict[str, bool]: ...
+  ```
+
+### 模組 6: `src/sniffer.py` (`HeadlessStreamSniffer`)
+- **核心職責**：以無頭 Chromium 攔截動態網頁請求，嗅探 `.m3u8` / `.mpd` 串流直鏈與 Headers（The Stream Detector 引擎 - v1.2.0）。
+- **公開介面**：
+  ```python
+  class HeadlessStreamSniffer:
+      def __init__(self, timeout: int = 15, headless: bool = True): ...
+      def is_available(self) -> bool: ...
+      def sniff(self, url: str, user_agent: Optional[str] = None, on_detected: Optional[Callable] = None) -> Optional[SniffResult]: ...
   ```
 
 ---
@@ -189,5 +202,51 @@
             │ (拉取 m3u8 分片，保持與瀏覽器相同憑證特徵)
             ▼
   [ 成功錄製，杜絕分片 403 阻斷 ]
++-------------------------------------------------------------------------------+
+```
+
+---
+
+## 6. 無頭瀏覽器動態串流嗅探拓撲 (Headless Stream Sniffer Topology - v1.2.0)
+
+```text
++-------------------------------------------------------------------------------+
+|             The Stream Detector 引擎：無頭瀏覽器動態嗅探拓撲 (ASCII)            |
++-------------------------------------------------------------------------------+
+
+  [ 目標網址 (如: https://missav.ai/gvh-852) ]
+                      │
+                      ▼
+            [ StreamExtractor ]
+                      │
+        (1. 呼叫 yt-dlp 標準解析)
+                      │
+         [ 觸發 Unsupported URL / JS 混淆 ]
+                      │
+                      ▼ (2. 自動觸發回退管線 Fallback)
+         [ HeadlessStreamSniffer ]
+                      │
+         ┌────────────┴────────────┐
+         ▼                         ▼
+  [ 啟動無頭 Chromium ]     [ 設定 Viewport / Locale ]
+         │
+         ▼
+  [ 導覽至目標頁面 page.goto() ]
+         │
+         ▼ (網頁前端執行 Dean Edwards packed JS 解密)
+  [ HLS.js 播放器被觸發，發出媒體分片請求 ]
+         │
+         ▼ (page.on("request") 事件攔截)
+  [ 捕獲: https://surrit.com/.../playlist.m3u8 ]
+  [ 同步捕獲: User-Agent, Referer, Cookie, Origin ]
+         │
+         ▼ (關閉無頭瀏覽器實例)
+  [ 將嗅探直鏈傳回 StreamExtractor ]
+         │
+         ▼ (yt-dlp 解析 Master Playlist 規格多畫質 1080p / 720p)
+  [ 使用者互動選定畫質 ]
+         │
+         ▼ (帶入嗅探所得 Headers)
+  [ FFmpegDownloader 進行分片直接流拷貝 (.mp4) ]
 +-------------------------------------------------------------------------------+
 ```

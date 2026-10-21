@@ -41,6 +41,18 @@ def parse_arguments(args=None) -> argparse.Namespace:
         default=None,
         help="從本機瀏覽器提取 Cookies (例如: chrome, firefox, edge, safari, brave, opera)",
     )
+    parser.add_argument(
+        "--sniff",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="無頭瀏覽器動態串流嗅探模式 (auto: 遇未支援網站自動啟動; always: 強制啟用; never: 停用, 預設: auto)",
+    )
+    parser.add_argument(
+        "--sniff-timeout",
+        type=int,
+        default=15,
+        help="動態串流嗅探最長等待秒數 (預設: 15)",
+    )
     return parser.parse_args(args)
 
 
@@ -126,6 +138,8 @@ def run_app():
         args.url,
         impersonate=impersonate_target,
         cookies_from_browser=args.cookies_from_browser,
+        sniff_mode=args.sniff,
+        sniff_timeout=args.sniff_timeout,
     )
     try:
         title = extractor.get_title()

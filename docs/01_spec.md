@@ -124,6 +124,14 @@
   4. **Downloader HTTP Headers 貫穿**：將 yt-dlp 解析出的 HTTP Request Headers（含 User-Agent、Referer、Cookie）貫穿傳遞至 FFmpeg 下載指令之 `-headers`，杜絕 TS / m4s 媒體分片取片階段之 403 連線拒絕。
   5. **安全防護防禦**：對傳入 FFmpeg 之標頭鍵值實施嚴格 CRLF 注入過濾，防止標頭走私或非預期命令注入。
 
+### F7. 無頭瀏覽器動態串流嗅探引擎 (Headless Stream Sniffer / The Stream Detector Engine - v1.2.0 新增)
+- **目標場景**：針對未被 yt-dlp 原生支援、且使用前端 JavaScript 動態混淆加密（如 MissAV 的 Dean Edwards packer、動態載入 HLS/DASH 播放器）的各類影音網站。
+- **核心實作**：
+  1. **自動回退與動態探測 (The Stream Detector 原理)**：整合 `Playwright` 無頭 Chromium 瀏覽器，於 yt-dlp 判定為 `Unsupported URL` 或直接指定 `--sniff` 時自動啟動。
+  2. **網路層即時監聽 (Request Interception)**：監聽瀏覽器核心之所有網路請求（`page.on("request")`），精準攔截 `.m3u8`、`.mpd` 等影音串流清單網址與即時請求標頭（User-Agent, Referer, Cookies）。
+  3. **無縫串接下載管線**：嗅探成功後自動擷取 Master Playlist，交由 `StreamExtractor` 與 `FFmpegDownloader` 進行解析度過濾與斷線守護下載。
+  4. **優雅降級保護**：若環境未安裝 `playwright` 或瀏覽器核心，提供友善之安裝提示（`playwright install chromium`），不阻斷一般標準解析流程。
+
 ---
 
 ## 3. CLI 介面與參數設計 (Command Line Interface)
@@ -134,7 +142,7 @@
 
 選項說明：
   <URL>                                目標影片或直播網址（必填）
-  -v, --version                        顯示工具版本號 (v1.1.0)
+  -v, --version                        顯示工具版本號 (v1.2.0)
   -q, --quality <QUALITY>              指定畫質 (例如: 1080p, 720p, best) [預設: 互動選擇]
   -o, --output <DIR>                   指定儲存目錄 [預設: ./downloads]
   --wait                               啟用開播監聽模式（若未開播則自動等待）
@@ -143,6 +151,8 @@
   --no-pause                           停用鍵盤熱鍵監聽（適用於背景無頭模式運行）
   --impersonate <BROWSER>              啟用瀏覽器網路指紋偽裝 (預設: chrome，設為 none 關閉)
   --cookies-from-browser <BROWSER>     從指定瀏覽器讀取 Cookies (chrome/firefox/edge/safari)
+  --sniff <MODE>                       無頭瀏覽器動態嗅探模式 (auto/always/never，預設: auto)
+  --sniff-timeout <SEC>                動態串流嗅探最長等待秒數 (預設: 15)
 ```
 
 ---
@@ -151,12 +161,13 @@
 
 | 模組檔案 | 核心類別 / 函數 | 職責定義 |
 | :--- | :--- | :--- |
+| `src/sniffer.py` | `HeadlessStreamSniffer` | 基於 Playwright 攔截動態網頁請求，嗅探 `.m3u8` / `.mpd` 串流直鏈與標頭。 |
 | `src/watcher.py` | `StreamWatcher` | 負責探測串流狀態 (`is_live`)，支援 Impersonate 與 Cookies 輪詢防 403。 |
-| `src/extractor.py` | `StreamExtractor` | 包裝 `yt-dlp`，支援瀏覽器指紋偽裝、提取可用畫質、解析目標 URL 與 HTTP Headers。 |
+| `src/extractor.py` | `StreamExtractor` | 包裝 `yt-dlp`，支援瀏覽器指紋偽裝，整合 Sniffer 自動回退、畫質解析與標頭抽取。 |
 | `src/downloader.py` | `FFmpegDownloader` | 封裝 FFmpeg 進程、注入安全 HTTP Headers、進程隔離與進度回報。 |
 | `src/supervisor.py` | `ProcessSupervisor` | 負責進程生命週期管理、崩潰自動重啟、以及調用 `psutil` 執行 suspend/resume。 |
-| `src/utils.py` | 工具函數群 | 檔名安全清理、MP4 封裝完整性校驗、外部依賴與 `curl_cffi` 偽裝支援檢測。 |
-| `src/cli.py` | `run_app()` | 參數解析（`argparse`）、選單呈現、版本回報、反爬蟲參數協調。 |
+| `src/utils.py` | 工具函數群 | 檔名安全清理、MP4 完整性校驗、外部依賴、`curl_cffi` 與 `playwright` 檢測。 |
+| `src/cli.py` | `run_app()` | 參數解析（`argparse`）、選單呈現、版本回報、動態嗅探與反爬蟲協調。 |
 
 ---
 
@@ -164,6 +175,8 @@
 
 | 異常情境 (Edge Case) | 系統預期防禦行為 |
 | :--- | :--- |
+| **目標網站為 yt-dlp 不支援 (Unsupported URL) 或前端 JS 混淆** | 自動調用 `HeadlessStreamSniffer` (Playwright) 動態嗅探 `.m3u8` / `.mpd` 串流直鏈與 Headers。 |
+| **環境未安裝 Playwright 或 Chromium 瀏覽器** | 印出友好提示，引導執行 `playwright install chromium`，並建議使用者直接傳入 `.m3u8` 直鏈。 |
 | **目標網站觸發 Cloudflare 403** | 預設啟用 `impersonate=chrome` 與 `curl_cffi` 模擬瀏覽器 TLS 指紋；未安裝時主動警告引導安裝。 |
 | **HTTP 標頭存在 CRLF 注入嘗試** | `FFmpegDownloader` 檢驗標頭鍵值，發現 `\r` 或 `\n` 立即引發 `ValueError` 阻斷。 |
 | **系統未安裝 ffmpeg / ffprobe** | 啟動時即刻檢查 `shutil.which('ffmpeg')`，若缺失則印出明確安裝指引並優雅退出（Exit 1）。 |

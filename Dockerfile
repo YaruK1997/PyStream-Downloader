@@ -16,9 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create application working directory
 WORKDIR /app
 
-# Install Python requirements
+# Install Python requirements and Playwright Chromium
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    playwright install chromium --with-deps
 
 # Copy application source code
 COPY src/ ./src/
@@ -32,9 +33,9 @@ RUN mkdir -p /app/downloads && \
 # Switch to non-root user
 USER appuser
 
-# Healthcheck to verify Python runtime, dependencies (including curl_cffi for impersonation), and FFmpeg binary
+# Healthcheck to verify Python runtime, dependencies (including curl_cffi and playwright), and FFmpeg binary
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD python -c "import yt_dlp, psutil, curl_cffi, shutil; assert shutil.which('ffmpeg')" || exit 1
+    CMD python -c "import yt_dlp, psutil, curl_cffi, playwright, shutil; assert shutil.which('ffmpeg')" || exit 1
 
 # Default volume mount point
 VOLUME ["/app/downloads"]

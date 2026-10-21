@@ -19,6 +19,8 @@ class TestCLI(unittest.TestCase):
         self.assertFalse(args.no_pause)
         self.assertEqual(args.impersonate, "chrome")
         self.assertIsNone(args.cookies_from_browser)
+        self.assertEqual(args.sniff, "auto")
+        self.assertEqual(args.sniff_timeout, 15)
 
     def test_parse_arguments_custom(self):
         custom = [
@@ -31,6 +33,8 @@ class TestCLI(unittest.TestCase):
             "--no-pause",
             "--impersonate", "firefox",
             "--cookies-from-browser", "chrome",
+            "--sniff", "always",
+            "--sniff-timeout", "25",
         ]
         args = parse_arguments(custom)
         self.assertEqual(args.quality, "720p")
@@ -41,9 +45,11 @@ class TestCLI(unittest.TestCase):
         self.assertTrue(args.no_pause)
         self.assertEqual(args.impersonate, "firefox")
         self.assertEqual(args.cookies_from_browser, "chrome")
+        self.assertEqual(args.sniff, "always")
+        self.assertEqual(args.sniff_timeout, 25)
 
     def test_version_string(self):
-        self.assertEqual(__version__, "1.1.0")
+        self.assertEqual(__version__, "1.2.0")
 
 
 if __name__ == "__main__":

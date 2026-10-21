@@ -1,13 +1,14 @@
-"""Unit tests for src.extractor (TC-EX-01, TC-EX-02, TC-EX-03, TC-EX-04)."""
+"""Unit tests for src.extractor (TC-EX-01, TC-EX-02, TC-EX-03, TC-EX-04, TC-EX-05)."""
 
 import unittest
 from unittest.mock import MagicMock, patch
 
 from src.extractor import StreamExtractor
+from src.sniffer import SniffResult
 
 
 class TestExtractor(unittest.TestCase):
-    """Test extractor logic, format prioritization, and anti-bot impersonation options."""
+    """Test extractor logic, format prioritization, anti-bot impersonation, and sniffer fallback."""
 
     def test_extract_formats_sorting(self):
         extractor = StreamExtractor("https://example.com/test_video")
@@ -88,6 +89,30 @@ class TestExtractor(unittest.TestCase):
         opts = extractor._build_ydl_opts()
         self.assertNotIn("impersonate", opts)
         self.assertNotIn("extractor_args", opts)
+
+    def test_unsupported_url_triggers_sniffer_auto_fallback(self):
+        extractor = StreamExtractor("https://missav.ai/gvh-852", sniff_mode="auto")
+        mock_sniff_result = SniffResult(
+            stream_url="https://surrit.com/media/playlist.m3u8",
+            headers={"User-Agent": "SniffedUA", "Referer": "https://missav.ai/"},
+            title="MissAV Sniffed Title",
+            detected_streams=["https://surrit.com/media/playlist.m3u8"],
+        )
+
+        with patch("src.sniffer.HeadlessStreamSniffer.is_available", return_value=True):
+            with patch("src.sniffer.HeadlessStreamSniffer.sniff", return_value=mock_sniff_result):
+                with patch("yt_dlp.YoutubeDL.extract_info", side_effect=Exception("ERROR: Unsupported URL")):
+                    info = extractor.extract_metadata()
+                    self.assertIsNotNone(info)
+                    self.assertEqual(info["url"], "https://surrit.com/media/playlist.m3u8")
+                    self.assertEqual(info["title"], "MissAV Sniffed Title")
+                    self.assertEqual(info["http_headers"]["Referer"], "https://missav.ai/")
+
+    def test_sniff_mode_never_re_raises_unsupported_url(self):
+        extractor = StreamExtractor("https://missav.ai/gvh-852", sniff_mode="never")
+        with patch("yt_dlp.YoutubeDL.extract_info", side_effect=Exception("ERROR: Unsupported URL")):
+            with self.assertRaises(Exception):
+                extractor.extract_metadata()
 
     def test_extractor_missing_ytdlp_error(self):
         extractor = StreamExtractor("https://example.com/test")

@@ -86,10 +86,11 @@
   - `verify_mp4_integrity` 僅讀取頭尾 4096 位元組進行 Box 分析，禁止將 GB 級影片一次性載入記憶體。
 
 ### 3.5 軟體供應鏈與相依套件審查 (SCA - CWE-1395)
-- **檢驗對象**：`requirements.txt` (`yt-dlp>=2024.3.10`, `psutil>=5.9.0`, `curl_cffi>=0.7.0`)。
+- **檢驗對象**：`requirements.txt` (`yt-dlp>=2024.3.10`, `psutil>=5.9.0`, `curl_cffi>=0.7.0`, `playwright>=1.40.0`)。
 - **審核結果**：**通過 (PASSED)**
   - 套件版本設定 `>=` 下限，相容官方最新漏洞修補版本。
   - `curl_cffi` 採用官方 wheel 預編譯二進位發行檔，依循系統 TLS 憑證鏈，無惡意後門與已知 CVE 弱點。
+  - `playwright` 來自 Microsoft 官方維護庫，下載之 Chromium 二進位檔具備官方校驗碼防偽機制。
 
 ### 3.6 HTTP 標頭注入與 CRLF 防護 (CRLF Injection / Header Smuggling - CWE-113)
 - **檢驗對象**：`src/downloader.py` 之 `_validate_and_sanitize_headers`。
@@ -103,6 +104,13 @@
 - **審核結果**：**通過 (PASSED)**
   - 僅調用 `yt-dlp` 原生之唯讀資料庫解密引擎，不寫入本地暫存檔案或日誌。
   - 傳入 FFmpeg 之標頭僅於記憶體管線（In-Memory Process Args）中傳遞，不殘留於磁碟。
+
+### 3.8 無頭瀏覽器沙盒與資源耗盡防護 (Browser Sandbox & Denial of Service - CWE-250 / CWE-400)
+- **檢驗對象**：`src/sniffer.py` 之 `HeadlessStreamSniffer`。
+- **檢查重點**：無頭瀏覽器執行不受信任的網頁 JavaScript 時，是否具備進程隔離、生命週期銷毀與超時退出機制。
+- **審核結果**：**通過 (PASSED)**
+  - 每個嗅探任務皆建立全新、隔離之暫時性 `BrowserContext`，不共享快取與磁碟儲存，嗅探結束或失敗時強制在 `finally:` 區塊執行 `browser.close()`。
+  - 配置硬性 `timeout`（預設 15 秒）與早退機制（一旦捕獲 m3u8 即時釋放瀏覽器），防範惡意網頁以無限迴圈消耗系統 CPU / RAM。
 
 ---
 

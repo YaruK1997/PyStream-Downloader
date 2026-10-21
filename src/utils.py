@@ -80,10 +80,23 @@ def check_impersonate_support() -> bool:
         return False
 
 
+def check_playwright_support() -> bool:
+    """Check if playwright and chromium executable are available."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            # Check if chromium executable exists
+            executable = p.chromium.executable_path
+            return os.path.exists(executable) if executable else False
+    except (ImportError, Exception):
+        return False
+
+
 def check_system_dependencies() -> dict[str, bool]:
     """Check availability of external tools and core packages."""
     return {
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "ffprobe": shutil.which("ffprobe") is not None,
         "impersonate": check_impersonate_support(),
+        "playwright": check_playwright_support(),
     }

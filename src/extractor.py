@@ -1,4 +1,4 @@
-"""Stream and format extractor module using yt-dlp."""
+"""Stream and format extractor module using yt-dlp with Headless Stream Sniffer fallback."""
 
 from typing import Any, Optional
 
@@ -11,11 +11,16 @@ class StreamExtractor:
         url: str,
         impersonate: Optional[str] = "chrome",
         cookies_from_browser: Optional[str] = None,
+        sniff_mode: str = "auto",
+        sniff_timeout: int = 15,
     ):
         self.url = url
         self.impersonate = impersonate if impersonate and impersonate.lower() not in ("none", "false", "off") else None
         self.cookies_from_browser = cookies_from_browser
+        self.sniff_mode = sniff_mode.lower() if sniff_mode else "auto"
+        self.sniff_timeout = max(5, sniff_timeout)
         self._raw_info: Optional[dict[str, Any]] = None
+        self._sniff_result: Optional[Any] = None
 
     def _ensure_ytdlp(self):
         """Lazy load yt-dlp to allow friendly error handling if missing."""
@@ -60,16 +65,89 @@ class StreamExtractor:
 
         return ydl_opts
 
+    def _run_sniffer(self) -> dict[str, Any]:
+        """Trigger headless browser stream sniffer for dynamic or obfuscated websites."""
+        from .sniffer import HeadlessStreamSniffer
+
+        sniffer = HeadlessStreamSniffer(timeout=self.sniff_timeout)
+        if not sniffer.is_available():
+            raise RuntimeError(
+                "目標網址未被 yt-dlp 原生支援，且本機環境未安裝 Playwright 或 Chromium 瀏覽器。\n"
+                "請先執行: pip install playwright && playwright install chromium，\n"
+                "或從瀏覽器開發者工具 (F12 -> Network -> 篩選 m3u8) 直接複製串流直鏈傳入。"
+            )
+
+        print(f"[INFO] 正在啟動無頭瀏覽器動態嗅探串流 (The Stream Detector 引擎，最長等待 {self.sniff_timeout}s)...")
+        res = sniffer.sniff(self.url)
+        if not res or not res.stream_url:
+            raise RuntimeError(
+                f"動態嗅探逾時或未在該網頁偵測到 HLS/DASH 媒體串流 (.m3u8 / .mpd)。\n"
+                f"若目標需要登入或點擊驗證碼，建議手動從瀏覽器 (F12 -> Network -> 篩選 m3u8) 複製直鏈。"
+            )
+
+        self._sniff_result = res
+        print(f"[SUCCESS] 成功嗅探到動態串流直鏈: {res.stream_url}")
+
+        # Now extract formats from the sniffed stream URL using yt-dlp
+        yt_dlp = self._ensure_ytdlp()
+        ydl_opts = self._build_ydl_opts()
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(res.stream_url, download=False)
+                if info:
+                    if res.title and (not info.get("title") or info.get("title") == "untitled_stream"):
+                        info["title"] = res.title
+                    existing_headers = info.get("http_headers", {})
+                    existing_headers.update(res.headers)
+                    info["http_headers"] = existing_headers
+                    return info
+        except Exception:
+            pass
+
+        # Fallback info dict if yt-dlp cannot inspect the m3u8 further
+        return {
+            "id": "sniffed_stream",
+            "title": res.title or "sniffed_stream",
+            "url": res.stream_url,
+            "http_headers": res.headers,
+            "formats": [
+                {
+                    "format_id": "best",
+                    "resolution": "auto",
+                    "height": 1080,
+                    "url": res.stream_url,
+                    "ext": "mp4",
+                    "http_headers": res.headers,
+                }
+            ],
+        }
+
     def extract_metadata(self) -> dict[str, Any]:
         """Extract full metadata dictionary without downloading the media."""
         if self._raw_info is not None:
             return self._raw_info
 
+        if self.sniff_mode == "always":
+            self._raw_info = self._run_sniffer()
+            return self._raw_info
+
         yt_dlp = self._ensure_ytdlp()
         ydl_opts = self._build_ydl_opts()
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            self._raw_info = ydl.extract_info(self.url, download=False)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                self._raw_info = ydl.extract_info(self.url, download=False)
+        except Exception as e:
+            err_msg = str(e).lower()
+            if self.sniff_mode == "auto" and (
+                "unsupported url" in err_msg
+                or "is not a valid url" in err_msg
+                or "no video formats found" in err_msg
+            ):
+                print(f"[INFO] yt-dlp 無法直接識別該網址，自動啟用無頭瀏覽器動態嗅探...")
+                self._raw_info = self._run_sniffer()
+            else:
+                raise
 
         return self._raw_info
 
