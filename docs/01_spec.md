@@ -132,6 +132,19 @@
   3. **無縫串接下載管線**：嗅探成功後自動擷取 Master Playlist，交由 `StreamExtractor` 與 `FFmpegDownloader` 進行解析度過濾與斷線守護下載。
   4. **優雅降級保護**：若環境未安裝 `playwright` 或瀏覽器核心，提供友善之安裝提示（`playwright install chromium`），不阻斷一般標準解析流程。
 
+### F8. 雙軌容器自適應晉升架構與 Exit Code 42 協議 (Dual-Tier Auto-Escalation Protocol - v1.3.0 新增)
+- **目標場景**：兼顧容器極致輕量化（420MB）與動態嗅探通用性（通殺前端 JS 混淆），且使用者「完全無感、無需手動切換參數」。
+- **核心實作**：
+  1. **多階段容器構建 (Multi-Stage Docker Targets)**：
+     - `slim` (預設標籤)：僅包含 Python 3.10 + FFmpeg + yt-dlp + curl_cffi（體積約 420MB，建置僅需 40 秒）。
+     - `full` (完整標籤)：以 `slim` 為基底，增量安裝 Playwright 與完整 Chromium 瀏覽器（配置 `shm_size: 2gb`）。
+  2. **狀態碼晉升協議 (Exit Code 42 Protocol)**：
+     - 若在輕量容器 `downloader` 中執行，當 `StreamExtractor` 判定目標網頁必須依賴無頭瀏覽器，但環境缺乏 Chromium 時，拋出約定之信號代碼 `sys.exit(42)`。
+  3. **智慧調度腳本 (Smart Dispatcher in deploy.sh / deploy.ps1)**：
+     - 外層啟動腳本自動監聽容器退出狀態碼：
+       - 若正常結束（Exit Code 0）或一般錯誤（Code 1），正常退出。
+       - 若捕獲狀態碼 `42`，腳本立即在控制台顯示提示訊息，並自動升級以 `docker-compose --profile full run --rm downloader-full` 重新調度任務，全程無須使用者干預。
+
 ---
 
 ## 3. CLI 介面與參數設計 (Command Line Interface)
@@ -142,7 +155,6 @@
 
 選項說明：
   <URL>                                目標影片或直播網址（必填）
-  -v, --version                        顯示工具版本號 (v1.2.0)
   -q, --quality <QUALITY>              指定畫質 (例如: 1080p, 720p, best) [預設: 互動選擇]
   -o, --output <DIR>                   指定儲存目錄 [預設: ./downloads]
   --wait                               啟用開播監聽模式（若未開播則自動等待）
@@ -176,7 +188,7 @@
 | 異常情境 (Edge Case) | 系統預期防禦行為 |
 | :--- | :--- |
 | **目標網站為 yt-dlp 不支援 (Unsupported URL) 或前端 JS 混淆** | 自動調用 `HeadlessStreamSniffer` (Playwright) 動態嗅探 `.m3u8` / `.mpd` 串流直鏈與 Headers。 |
-| **環境未安裝 Playwright 或 Chromium 瀏覽器** | 印出友好提示，引導執行 `playwright install chromium`，並建議使用者直接傳入 `.m3u8` 直鏈。 |
+| **環境未安裝 Playwright 或 Chromium 瀏覽器** | 若在輕量容器中則觸發 Exit Code 42 自動升級至 full 容器；本機環境則提供友善安裝指引。 |
 | **目標網站觸發 Cloudflare 403** | 預設啟用 `impersonate=chrome` 與 `curl_cffi` 模擬瀏覽器 TLS 指紋；未安裝時主動警告引導安裝。 |
 | **HTTP 標頭存在 CRLF 注入嘗試** | `FFmpegDownloader` 檢驗標頭鍵值，發現 `\r` 或 `\n` 立即引發 `ValueError` 阻斷。 |
 | **系統未安裝 ffmpeg / ffprobe** | 啟動時即刻檢查 `shutil.which('ffmpeg')`，若缺失則印出明確安裝指引並優雅退出（Exit 1）。 |

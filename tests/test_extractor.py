@@ -114,6 +114,14 @@ class TestExtractor(unittest.TestCase):
             with self.assertRaises(Exception):
                 extractor.extract_metadata()
 
+    def test_unsupported_url_raises_needs_full_sniffer_when_unavailable(self):
+        from src.extractor import NeedsFullSnifferError
+        extractor = StreamExtractor("https://missav.ai/gvh-852", sniff_mode="auto")
+        with patch("src.sniffer.HeadlessStreamSniffer.is_available", return_value=False):
+            with patch("yt_dlp.YoutubeDL.extract_info", side_effect=Exception("ERROR: Unsupported URL")):
+                with self.assertRaises(NeedsFullSnifferError):
+                    extractor.extract_metadata()
+
     def test_extractor_missing_ytdlp_error(self):
         extractor = StreamExtractor("https://example.com/test")
         with patch.dict("sys.modules", {"yt_dlp": None}):

@@ -250,3 +250,43 @@
   [ FFmpegDownloader 進行分片直接流拷貝 (.mp4) ]
 +-------------------------------------------------------------------------------+
 ```
+
+---
+
+## 7. 雙軌容器自適應晉升拓撲 (Dual-Tier Container Auto-Escalation Topology - v1.3.0)
+
+```text
++-------------------------------------------------------------------------------+
+|         雙軌容器 Compose Profiles 與 Exit Code 42 自適應調度 (ASCII)          |
++-------------------------------------------------------------------------------+
+
+                  [ 使用者執行: ./deploy.sh 或 ./deploy.ps1 ]
+                                      │
+                                      ▼
+                        [ 預設以輕量容器啟動 ]
+                     docker-compose run --rm downloader
+                     (映像檔: pystream-downloader:slim)
+                     (大小: ~420MB, 記憶體: ~100MB)
+                                      │
+                                      ▼
+                   [ 目標網頁為 YouTube/Twitch 等主流站點? ]
+                                 /         \
+                             (是)           (否，需無頭嗅探但環境無 Chromium)
+                              /               \
+                             ▼                 ▼
+                     [ 正常完成下載 ]    [ 程式拋出 NeedsFullSnifferError ]
+                     [ Exit Code: 0 ]    [ 觸發協定代碼: sys.exit(42) ]
+                                                       │
+                                                       ▼
+                                      [ 外層智慧調度腳本捕獲 Exit Code 42 ]
+                                                       │
+                                                       ▼ (控制台提示並自動晉升)
+                                      [ 自動重啟為完整嗅探容器 (--profile full) ]
+                                     docker-compose --profile full run downloader-full
+                                     (映像檔: pystream-downloader:full)
+                                     (大小: ~1.4GB, shm_size: 2gb, 含 Chromium)
+                                                       │
+                                                       ▼
+                                      [ 啟動 Chromium 嗅探並無縫完成下載 ]
++-------------------------------------------------------------------------------+
+```

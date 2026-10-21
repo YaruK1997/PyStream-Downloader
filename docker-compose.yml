@@ -1,12 +1,14 @@
 version: '3.8'
 
 services:
-  pystream-downloader:
+  # 預設輕量下載器 (適合 90% YouTube/Twitch/標準串流，體積 ~420MB，秒開)
+  downloader:
     build:
       context: .
       dockerfile: Dockerfile
-    image: pystream-downloader:latest
-    container_name: pystream-downloader
+      target: slim
+    image: pystream-downloader:slim
+    container_name: pystream-downloader-slim
     stdin_open: true  # -i for interactive mode
     tty: true         # -t for interactive tty
     volumes:
@@ -14,5 +16,22 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     restart: "no"
-    # Example usage:
-    # docker-compose run --rm pystream-downloader "https://example.com/stream" -q 1080p
+
+  # 完整動態嗅探下載器 (適合 MissAV 等動態 JS 混淆站點，含 Playwright Chromium，體積 ~1.4GB)
+  downloader-full:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: full
+    image: pystream-downloader:full
+    container_name: pystream-downloader-full
+    shm_size: '2gb' # 避免 Chromium 共享記憶體崩潰
+    ipc: host       # 共享主機 IPC 資源加速無頭渲染
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./downloads:/app/downloads
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: "no"

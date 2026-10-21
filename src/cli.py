@@ -6,7 +6,7 @@ import sys
 
 from . import __version__
 from .downloader import FFmpegDownloader
-from .extractor import StreamExtractor
+from .extractor import EXIT_CODE_NEED_FULL_SNIFFER, NeedsFullSnifferError, StreamExtractor
 from .supervisor import ProcessSupervisor
 from .utils import (
     check_impersonate_support,
@@ -144,6 +144,10 @@ def run_app():
     try:
         title = extractor.get_title()
         formats = extractor.get_available_formats()
+    except NeedsFullSnifferError as e:
+        print(f"\n[Auto-Detect] {e}")
+        print("[Auto-Detect] 正在向調度器發送自適應升級信號 (Exit code: 42)...")
+        sys.exit(EXIT_CODE_NEED_FULL_SNIFFER)
     except Exception as e:
         print(f"[ERROR] 解析串流失敗: {e}")
         sys.exit(1)

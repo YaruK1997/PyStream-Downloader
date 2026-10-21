@@ -57,8 +57,11 @@
 | **TC-UT-03** | `tests/test_utils.py` | 系統依賴檢測加入 `check_impersonate_support()` | 正確識別 `curl_cffi` 與 `yt-dlp` 指紋庫就緒狀態。 |
 | **TC-SN-01** | `tests/test_sniffer.py` | `HeadlessStreamSniffer` 網路攔截與 m3u8/mpd 串流直鏈辨識 | 驗證 Chromium 啟動、`page.on("request")` 事件攔截與標頭抽取。 |
 | **TC-SN-02** | `tests/test_extractor.py` | `StreamExtractor` 遇 `Unsupported URL` 自動觸發 Sniffer 回退 | 驗證 yt-dlp 失敗時自動接軌 Playwright 嗅探器並獲取可用格式。 |
+| **TC-EX-06** | `tests/test_extractor.py` | 遇動態混淆站點且本機無 Chromium 嗅探器時之自適應升級信號觸發 | 拋出 `NeedsFullSnifferError`（常數 `EXIT_CODE_NEED_FULL_SNIFFER = 42`）。 |
 | **TC-CL-02** | `tests/test_cli.py` | CLI `--sniff`（auto/always/never）與 `--sniff-timeout` 參數解析 | 驗證動態嗅探模式與自訂超時解析正確。 |
+| **TC-CL-05** | `tests/test_cli.py` | CLI 捕獲 `NeedsFullSnifferError` 與進程退出代碼轉換 | 驗證主程序精準以 `sys.exit(42)` 終止，供外部編排器或 Shell 腳本自動升級。 |
 | **TC-UT-04** | `tests/test_utils.py` | 系統依賴檢測加入 `check_playwright_support()` | 正確檢驗 Playwright 庫與本機 Chromium 二進位執行檔可用性。 |
+| **TC-SC-12** | `tests/test_stage2_self_check.py` | 階段 2 冒煙自檢：驗證 Exit Code 42 自適應升級協定與異常封裝 | 驗證 `NeedsFullSnifferError` 屬性、例外回溯與主調度器狀態碼對齊。 |
 
 ---
 

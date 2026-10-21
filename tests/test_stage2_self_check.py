@@ -224,6 +224,18 @@ class TestStage2SelfCheck(unittest.TestCase):
                 self.assertEqual(info["url"], "https://surrit.com/test.m3u8")
                 self.assertEqual(info["title"], "Sniffed Stream")
 
+    def test_12_exit_code_42_escalation_protocol(self):
+        """Verify Exit Code 42 escalation protocol when sniffer is required but unavailable."""
+        from src.extractor import EXIT_CODE_NEED_FULL_SNIFFER, NeedsFullSnifferError
+        from src.sniffer import HeadlessStreamSniffer
+
+        self.assertEqual(EXIT_CODE_NEED_FULL_SNIFFER, 42)
+        extractor = StreamExtractor("https://missav.ai/dynamic", sniff_mode="auto")
+        with patch.object(HeadlessStreamSniffer, "is_available", return_value=False):
+            with patch("yt_dlp.YoutubeDL.extract_info", side_effect=Exception("ERROR: Unsupported URL")):
+                with self.assertRaises(NeedsFullSnifferError):
+                    extractor.extract_metadata()
+
 
 if __name__ == "__main__":
     unittest.main()

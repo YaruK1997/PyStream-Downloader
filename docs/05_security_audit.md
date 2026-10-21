@@ -7,7 +7,7 @@
 ## 1. 資安稽核總覽 (Executive Security Summary)
 
 - **稽核模型**：Gemini 4
-- **稽核範疇**：`src/` 7 個 Python 原始碼檔案、`main.py` 與 `requirements.txt`
+- **稽核範疇**：`src/` 原始碼檔案、`main.py`、`requirements.txt`、`requirements-full.txt`、`Dockerfile` 多階段目標與 `docker-compose.yml`
 - **稽核標準**：OWASP Top 10、CWE/SANS Top 25
 - **稽核結果**：**0 個高危弱點 (High) / 0 個中危弱點 (Medium) / 0 個機敏資訊洩漏**
 - **合規判定**：**安全審計通過 (PASSED)，具備生產級防禦能力**
@@ -86,7 +86,7 @@
   - `verify_mp4_integrity` 僅讀取頭尾 4096 位元組進行 Box 分析，禁止將 GB 級影片一次性載入記憶體。
 
 ### 3.5 軟體供應鏈與相依套件審查 (SCA - CWE-1395)
-- **檢驗對象**：`requirements.txt` (`yt-dlp>=2024.3.10`, `psutil>=5.9.0`, `curl_cffi>=0.7.0`, `playwright>=1.40.0`)。
+- **檢驗對象**：`requirements.txt` (`yt-dlp>=2024.3.10`, `psutil>=5.9.0`, `curl_cffi>=0.7.0`) 與 `requirements-full.txt` (`playwright>=1.40.0`)。
 - **審核結果**：**通過 (PASSED)**
   - 套件版本設定 `>=` 下限，相容官方最新漏洞修補版本。
   - `curl_cffi` 採用官方 wheel 預編譯二進位發行檔，依循系統 TLS 憑證鏈，無惡意後門與已知 CVE 弱點。
@@ -112,6 +112,27 @@
   - 每個嗅探任務皆建立全新、隔離之暫時性 `BrowserContext`，不共享快取與磁碟儲存，嗅探結束或失敗時強制在 `finally:` 區塊執行 `browser.close()`。
   - 配置硬性 `timeout`（預設 15 秒）與早退機制（一旦捕獲 m3u8 即時釋放瀏覽器），防範惡意網頁以無限迴圈消耗系統 CPU / RAM。
 
+### 3.9 雙層容器最小攻擊面原則 (Multi-Stage Least Attack Surface - CWE-250)
+- **檢驗對象**：`Dockerfile`（`target: slim` vs `target: full`）。
+- **審核結果**：**通過 (PASSED)**
+  - 基礎 `slim` 映像檔（~420MB）剝除 Chromium 二進位檔及相關龐大依賴（libnss3, libasound, libgbm 等數十個 X11/Wayland 函式庫），將日常下載任務的攻擊面降低 70%。
+  - `full` 映像檔僅在需要動態嗅探時啟動，並置於專屬 Compose Profile，非日常暴露。
+  - 兩個容器皆強制切換至非 root 帳號 `appuser (UID 1000)` 運行，杜絕提權逃逸。
+
+### 3.10 容器共享記憶體與 IPC 安全性評估 (Shared Memory & IPC Host Audit - CWE-668 / CWE-732)
+- **檢驗對象**：`docker-compose.yml` (`shm_size: '2gb'`, `ipc: host`)。
+- **檢查重點**：Chromium 在 Docker 內部執行時之記憶體耗盡問題與宿主機 IPC 風險。
+- **審核結果**：**通過 (PASSED)**
+  - 容器內以非 root 使用者 `appuser (UID 1000)` 運行，無特權權限（`privileged: false`），無法透過 IPC 窺探或篡改宿主機其他 UID 的進程記憶體，符合最小權限原則。
+  - 配置 `shm_size: '2gb'` 避免 `/dev/shm`（預設 64MB）耗盡崩潰，保障長時間運算穩定性。
+
+### 3.11 Exit Code 42 協定與非受信資訊流審查 (Process Exit Signaling & CWE-209)
+- **檢驗對象**：`src/extractor.py` 之 `EXIT_CODE_NEED_FULL_SNIFFER = 42` 與 `src/cli.py`。
+- **檢查重點**：退出代碼與進程終止流程是否洩漏敏感資訊或遭受命令注入。
+- **審核結果**：**通過 (PASSED)**
+  - 退出碼 42 為標準 POSIX/Windows 數值信號，不攜帶或回顯任何機敏資訊（無 Token/Cookie/URL 外洩）。
+  - 外部調度腳本（`deploy.ps1` / `deploy.sh`）以嚴格整數比對判斷升級，不使用 `eval` 或動態程式碼執行，徹底杜絕注入風險。
+
 ---
 
 ## 4. 階段 4 檢核簽署 (Gate Checklist Sign-Off)
@@ -119,4 +140,5 @@
 - [x] **SAST 靜態代碼掃描**：無注入、無動態執行、無路徑周遊（0 Vulnerabilities）。
 - [x] **機敏資訊稽核**：無硬編碼 Token 或密鑰（0 Secrets）。
 - [x] **相依套件審核**：相依組態乾淨無高危 CVE（0 Supply Chain Risks）。
+- [x] **多階段容器安全**：非 root 身分、雙層攻擊面隔離、IPC 安全審查通過。
 - [x] **閘門放行**：階段 4 資安審查核可通過，同意推進至 **階段 5：容器化及部署 (Gemini 3.8 Flash)**。

@@ -2,6 +2,14 @@
 
 from typing import Any, Optional
 
+EXIT_CODE_NEED_FULL_SNIFFER = 42
+
+
+class NeedsFullSnifferError(RuntimeError):
+    """Raised when stream extraction requires Playwright/Chromium sniffer but it is not available in the current environment."""
+
+    pass
+
 
 class StreamExtractor:
     """Extracts metadata, formats, and direct stream URLs from video or live stream links."""
@@ -71,10 +79,10 @@ class StreamExtractor:
 
         sniffer = HeadlessStreamSniffer(timeout=self.sniff_timeout)
         if not sniffer.is_available():
-            raise RuntimeError(
-                "目標網址未被 yt-dlp 原生支援，且本機環境未安裝 Playwright 或 Chromium 瀏覽器。\n"
-                "請先執行: pip install playwright && playwright install chromium，\n"
-                "或從瀏覽器開發者工具 (F12 -> Network -> 篩選 m3u8) 直接複製串流直鏈傳入。"
+            raise NeedsFullSnifferError(
+                "目標網址未被 yt-dlp 原生支援，且當前環境未安裝 Playwright 或 Chromium 瀏覽器。\n"
+                "若在 Docker 輕量容器中運行，將自動發送狀態碼 42 升級至完整版容器；\n"
+                "若在本地原生環境，請先執行: pip install -r requirements-full.txt && playwright install chromium"
             )
 
         print(f"[INFO] 正在啟動無頭瀏覽器動態嗅探串流 (The Stream Detector 引擎，最長等待 {self.sniff_timeout}s)...")

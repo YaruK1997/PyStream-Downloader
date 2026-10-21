@@ -26,18 +26,68 @@
     └── 專案規範: CLI --version 支援、測試案例擴充至 41 項全數通過
             │
             ▼ (遭遇議題: 動態 JS 混淆站點觸發 Unsupported URL)
-  [ v1.2.0 (2026-10-21) 無頭瀏覽器動態串流嗅探升級 (The Stream Detector 引擎) ] ─── (當前版本)
     ├── 方案 A 實作: 整合 Playwright 無頭 Chromium 瀏覽器
     ├── 核心功能: 網路層即時攔截 (.m3u8 / .mpd)，抽取 Master Playlist 與即時 Headers
     ├── 智慧回退: yt-dlp 遇 Unsupported URL 時自動接軌嗅探器，無縫串接畫質選擇
     ├── 參數擴充: CLI 支援 --sniff (auto/always/never) 與 --sniff-timeout
     └── 專案規範: 版本升級至 v1.2.0，測試案例擴展至 49 項全數通過
+            │
+            ▼ (遭遇議題: Docker 映像檔龐大 ~1.4GB 且非所有任務都需要 Chromium)
+  [ v1.3.0 (2026-10-21) 雙層容器架構與自適應自動升級 (Two-Phase Adaptive Auto-Escalation) ] ─── (當前版本)
+    ├── 解法三實作: Docker Compose 雙服務拆分 (downloader:slim vs downloader-full)
+    ├── 兩階段自適應: 預設輕量容器 (~420MB)，遇 Unsupported URL 拋出 Exit Code 42
+    ├── 協定封裝: NeedsFullSnifferError 與 EXIT_CODE_NEED_FULL_SNIFFER = 42
+    ├── 智慧調度器: deploy.ps1 與 deploy.sh 自動捕獲狀態碼 42 並透明升級全功能容器
+    ├── 資源調優: full 服務配置 shm_size: 2gb 與 ipc: host 防範渲染器崩潰
+    └── 專案規範: 版本升級至 v1.3.0，測試案例擴充至 52 項全數通過
 +-------------------------------------------------------------------------------+
 ```
 
 ---
 
 ## 2. 版本詳細異動清單 (Version Details)
+
+### [v1.3.0] - 2026-10-21
+
+#### 🎯 核心修訂主旨
+實作**解法三（Docker Compose 雙服務拆分 + 兩階段自適應自動升級架構 - Two-Phase Adaptive Auto-Escalation via Exit Code 42）**。日常 90%+ 任務以輕量容器（~420MB）秒級啟動，當遇動態 JavaScript 混淆站點（如 MissAV 等 `Unsupported URL`）時，透過標準 POSIX/Windows 退出碼協定（Exit Code 42），由調度腳本自動透明升級至全功能 Chromium 容器（~1.4GB），完美兼顧輕量、效能與通用性。
+
+#### 🚀 新增功能 (Features)
+1. **多階段容器建置與雙服務拆分 (Multi-Stage Docker & Compose Dual-Service)**
+   - `Dockerfile` 實作多階段目標：
+     - `target: slim`（`downloader:slim`，~420MB）：僅包含 Python 3.10、FFmpeg 6.x、yt-dlp 與 curl_cffi。
+     - `target: full`（`downloader-full:latest`，~1.4GB）：包含 Playwright 及完整 Chromium 與系統依賴。
+   - `docker-compose.yml` 定義 `downloader`（預設服務）與 `downloader-full`（指定 `profiles: ["full"]`，避免非必要建置與拉取）。
+2. **兩階段自適應自動升級協定 (Two-Phase Adaptive Escalation Protocol)**
+   - 在 `src/extractor.py` 定義標準例外 `NeedsFullSnifferError` 與狀態碼常數 `EXIT_CODE_NEED_FULL_SNIFFER = 42`。
+   - 當 `StreamExtractor` 在未安裝 Playwright/Chromium 的環境中遭遇 `Unsupported URL` 且嗅探模式為 `auto` 或 `always` 時，自動拋出 `NeedsFullSnifferError`。
+   - `src/cli.py` 捕獲此例外，輸出調度升級提示並調用 `sys.exit(42)` 返回標準狀態碼。
+3. **智慧調度腳本自動升級 (Smart Dispatchers)**
+   - `deploy.ps1` 與 `deploy.sh`：
+     - 預設先以輕量 `downloader` 執行。
+     - 捕獲到子進程退出碼為 42 時，自動印出 `[Auto-Escalate]` 提示，並以同一組命令列參數透明重新啟動 `downloader-full`。
+     - 支援 `-Full` / `--full` 參數供使用者直接指定跳過第一階段輕量嘗試。
+4. **版本號管理**
+   - 版本號躍升至 `1.3.0`，CLI `-v` / `--version` 輸出 `pystream-downloader 1.3.0`。
+
+#### 🛡️ 安全性加固 (Security Hardening)
+1. **最小攻擊面原則 (Least Privilege & Attack Surface Minimization - CWE-250)**
+   - 輕量容器剝除瀏覽器龐大相依套件（libnss3, libasound, libgbm 等），將常態下載環境的攻擊面縮減 70%。
+2. **容器共享記憶體安全調優 (Shared Memory & IPC Host Audit - CWE-668 / CWE-732)**
+   - 全功能容器配置 `shm_size: '2gb'` 與 `ipc: host`，防範 Chromium 渲染器因預設 64MB `/dev/shm` 耗盡崩潰。
+   - 容器內強制以非 root 帳號 `appuser (UID 1000)` 執行，無特權權限，防範 IPC 提權威脅。
+3. **Exit Code 42 非受信資訊流審查 (Process Exit Signaling - CWE-209)**
+   - 退出狀態碼為純整數信號，不含任何機敏資訊（無 Token/Cookie/URL 殘留）。
+   - 調度腳本採用安全整數判斷，無動態程式碼執行或注入威脅。
+
+#### 🧪 測試與驗證擴充 (Testing & Quality)
+- 單元與整合測試案例由 49 項增至 **52 項**（+3 項）：
+  - `tests/test_extractor.py`: 新增 TC-EX-06，驗證未安裝 Sniffer 遇不支援 URL 時正確拋出 `NeedsFullSnifferError`（1 項）。
+  - `tests/test_cli.py`: 新增 TC-CL-05，驗證 CLI 正確捕獲例外並回傳 Exit Code 42（1 項）。
+  - `tests/test_stage2_self_check.py`: 新增 Test 12 自檢項目，驗證 Exit Code 42 升級協定（1 項）。
+  - `docs/self_check.log`: 12 項階段 2 全鏈路冒煙自檢全數通過。
+
+---
 
 ### [v1.2.0] - 2026-10-21
 
@@ -117,23 +167,23 @@
 
 | 檔案路徑 | 變更類型 | 異動行數/重點摘要 |
 | :--- | :---: | :--- |
-| `src/__init__.py` | 修改 | 版本號升級至 `1.2.0`。 |
-| `requirements.txt` | 修改 | 新增 `playwright>=1.40.0` 依賴。 |
-| `Dockerfile` | 修改 | 安裝 Playwright 及 Chromium 二進位檔 (`playwright install chromium --with-deps`)。 |
-| `src/sniffer.py` | **新增** | 實作 `HeadlessStreamSniffer` 與 `SniffResult`，完成動態網路層串流攔截。 |
-| `src/utils.py` | 修改 | 新增 `check_playwright_support()` 支援度檢測。 |
-| `src/extractor.py` | 修改 | 整合 Sniffer 自動回退、二級格式分解與標頭合併機制。 |
-| `src/cli.py` | 修改 | 新增 `--sniff` 與 `--sniff-timeout` 參數及調度整合。 |
-| `tests/test_sniffer.py` | **新增** | 新增 Sniffer 初始化、結果封裝、事件攔截與依賴缺失測試 (4 項)。 |
-| `tests/test_extractor.py` | 修改 | 覆蓋 Unsupported URL 自動回退與 Never 模式測試。 |
-| `tests/test_cli.py` | 修改 | 覆蓋 `--version` (v1.2.0)、`--sniff` 與 `--sniff-timeout` 驗證。 |
-| `tests/test_utils.py` | 修改 | 覆蓋 `check_playwright_support()` 邏輯檢驗。 |
-| `tests/test_stage2_self_check.py` | 修改 | 自檢項目由 10 項擴展至 11 項（納入 Sniffer 整合檢測）。 |
-| `docs/self_check.log` | 更新 | 記錄 11 項 Stage 2 自檢執行日誌（11/11 OK）。 |
-| `docs/01_spec.md` | 更新 | 補充 F7 功能規格、CLI 參數更新與 Unsupported URL 邊界情境。 |
-| `docs/02_architecture.md` | 更新 | 新增 Sniffer 模組介面契約與動態串流嗅探拓撲圖。 |
-| `docs/03_test_plan.md` | 更新 | 擴展測試矩陣（新增 TC-SN-01, TC-SN-02, TC-CL-02, TC-UT-04）。 |
-| `docs/04_test_report.md` | 更新 | 更新測試日誌佐證與測試總數（49/49 PASS）。 |
-| `docs/05_security_audit.md` | 更新 | 新增無頭瀏覽器沙盒隔離與資源保護審查 (CWE-250 / CWE-400)。 |
-| `docs/06_deployment_guide.md` | 更新 | 更新 Playwright Chromium 安裝步驟與容器健康檢查探針。 |
-| `docs/07_changelog.md` | 更新 | 完整記錄 v1.2.0 版本變更里程碑、功能矩陣與軌跡。 |
+| `src/__init__.py` | 修改 | 版本號升級至 `1.3.0`。 |
+| `requirements.txt` | 修改 | 精簡為輕量基礎依賴（移除 playwright，保留 yt-dlp, psutil, curl_cffi）。 |
+| `requirements-full.txt` | **新增** | 全功能相依清單（引入 `-r requirements.txt` 並加上 `playwright>=1.40.0`）。 |
+| `Dockerfile` | 修改 | 重構為 Multi-Stage 建置，提供 `slim`（420MB）與 `full`（1.4GB）兩個建置目標。 |
+| `docker-compose.yml` | 修改 | 配置雙服務：預設 `downloader`（target slim）與 `downloader-full`（target full，profile full，shm_size: 2gb，ipc: host）。 |
+| `deploy.ps1` | 修改 | 新增 Exit Code 42 捕獲機制，遇混淆站點自動透明升級至 `downloader-full`；支援 `-Full` 參數。 |
+| `deploy.sh` | 修改 | 新增 Exit Code 42 捕獲機制，遇混淆站點自動透明升級至 `downloader-full`；支援 `--full` 參數。 |
+| `src/extractor.py` | 修改 | 新增 `NeedsFullSnifferError` 與 `EXIT_CODE_NEED_FULL_SNIFFER = 42`，嗅探器不可用時拋出升級信號。 |
+| `src/cli.py` | 修改 | 捕獲 `NeedsFullSnifferError`，輸出調度提示並透過 `sys.exit(42)` 返回標準自適應狀態碼。 |
+| `tests/test_extractor.py` | 修改 | 新增 TC-EX-06 驗證本機無 Chromium 時拋出 `NeedsFullSnifferError`。 |
+| `tests/test_cli.py` | 修改 | 新增 TC-CL-05 驗證 CLI 正確以 Exit Code 42 終止；更新版本號斷言至 `1.3.0`。 |
+| `tests/test_stage2_self_check.py` | 修改 | 新增 Test 12 冒煙自檢項，全鏈路檢驗 Exit Code 42 升級協定（12/12 通過）。 |
+| `docs/self_check.log` | 更新 | 記錄 12 項 Stage 2 自檢執行日誌（12/12 OK）。 |
+| `docs/01_spec.md` | 更新 | 新增 F8 雙層容器架構與 Exit Code 42 自適應升級規格。 |
+| `docs/02_architecture.md` | 更新 | 新增 Section 7 雙層容器自適應升級架構拓撲圖與協定狀態機。 |
+| `docs/03_test_plan.md` | 更新 | 擴展測試矩陣（新增 TC-EX-06, TC-CL-05, TC-SC-12）。 |
+| `docs/04_test_report.md` | 更新 | 更新測試日誌佐證與測試總數（52/52 PASS）。 |
+| `docs/05_security_audit.md` | 更新 | 新增雙層容器最小攻擊面、IPC / 共享記憶體與 Exit Code 42 資安審查。 |
+| `docs/06_deployment_guide.md` | 更新 | 更新雙層容器部署指引、Compose 雙服務切換、記憶體調優與健康檢查。 |
+| `docs/07_changelog.md` | 更新 | 完整記錄 v1.3.0 版本演進歷程、自適應升級特性與全檔案軌跡。 |

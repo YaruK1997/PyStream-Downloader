@@ -49,7 +49,18 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.sniff_timeout, 25)
 
     def test_version_string(self):
-        self.assertEqual(__version__, "1.2.0")
+        self.assertEqual(__version__, "1.3.0")
+
+    def test_cli_handles_needs_full_sniffer_exit_code_42(self):
+        from unittest.mock import patch
+        from src.cli import run_app
+        from src.extractor import NeedsFullSnifferError
+
+        with patch("sys.argv", ["pystream-downloader", "https://missav.ai/test"]):
+            with patch("src.extractor.StreamExtractor.get_title", side_effect=NeedsFullSnifferError("Needs full sniffer")):
+                with self.assertRaises(SystemExit) as cm:
+                    run_app()
+                self.assertEqual(cm.exception.code, 42)
 
 
 if __name__ == "__main__":
