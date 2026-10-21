@@ -11,6 +11,30 @@ class NeedsFullSnifferError(RuntimeError):
     pass
 
 
+class StreamDetails(tuple):
+    """Container for resolved stream endpoints with backwards-compatible 3-tuple unpacking."""
+
+    def __new__(
+        cls,
+        stream_url: str,
+        quality_label: str,
+        headers: dict[str, str],
+        audio_url: Optional[str] = None,
+        audio_headers: Optional[dict[str, str]] = None,
+        audio_codec: Optional[str] = None,
+        is_muxed: bool = False,
+    ):
+        instance = super().__new__(cls, (stream_url, quality_label, headers))
+        instance.stream_url = stream_url
+        instance.quality_label = quality_label
+        instance.headers = headers
+        instance.audio_url = audio_url
+        instance.audio_headers = audio_headers
+        instance.audio_codec = audio_codec
+        instance.is_muxed = is_muxed
+        return instance
+
+
 class StreamExtractor:
     """Extracts metadata, formats, and direct stream URLs from video or live stream links."""
 
@@ -164,10 +188,45 @@ class StreamExtractor:
         info = self.extract_metadata()
         return info.get("title", "untitled_stream")
 
+    def get_best_audio_format(self, formats: Optional[list[dict[str, Any]]] = None) -> Optional[dict[str, Any]]:
+        """Find the best audio format matching container output standards (prefers AAC/m4a for MP4)."""
+        if formats is None:
+            info = self.extract_metadata()
+            formats = info.get("formats", [])
+
+        audio_candidates = []
+        for fmt in formats:
+            vcodec = fmt.get("vcodec", "none") or "none"
+            acodec = fmt.get("acodec", "none") or "none"
+            url = fmt.get("url")
+            ext = fmt.get("ext", "")
+
+            # Audio-only streams
+            if vcodec == "none" and acodec != "none" and url and ext != "mhtml":
+                abr = fmt.get("abr") or fmt.get("tbr") or 0
+                is_aac = any(sub in acodec.lower() for sub in ("mp4a", "aac")) or ext.lower() == "m4a"
+                is_drc = "-drc" in fmt.get("format_id", "").lower()
+                audio_candidates.append({
+                    "format": fmt,
+                    "is_aac": is_aac,
+                    "is_drc": is_drc,
+                    "abr": float(abr),
+                    "format_id": fmt.get("format_id", ""),
+                })
+
+        if not audio_candidates:
+            return None
+
+        # Prioritize AAC formats for MP4, non-DRC formats, and highest bitrate
+        audio_candidates.sort(key=lambda x: (x["is_aac"], not x["is_drc"], x["abr"]), reverse=True)
+        return audio_candidates[0]["format"]
+
     def get_available_formats(self) -> list[dict[str, Any]]:
         """Filter and return formatted resolution options suitable for user selection."""
         info = self.extract_metadata()
         formats = info.get("formats", [])
+
+        best_audio = self.get_best_audio_format(formats)
 
         valid_options = []
         seen_res = set()
@@ -190,6 +249,14 @@ class StreamExtractor:
                 continue
 
             seen_res.add(res_label)
+
+            # Audio tracking: check if format needs separate audio track
+            has_separate_audio = (acodec == "none" or not acodec) and (best_audio is not None)
+            eff_audio_url = best_audio.get("url") if has_separate_audio else None
+            eff_audio_headers = (best_audio.get("http_headers") or info.get("http_headers", {})) if has_separate_audio else None
+            eff_audio_codec = best_audio.get("acodec") if has_separate_audio else acodec
+            eff_audio_fmt_id = best_audio.get("format_id") if has_separate_audio else None
+
             valid_options.append({
                 "format_id": fmt_id,
                 "resolution": res_label,
@@ -201,6 +268,11 @@ class StreamExtractor:
                 "url": fmt.get("url", ""),
                 "protocol": fmt.get("protocol", "http"),
                 "http_headers": fmt.get("http_headers") or info.get("http_headers", {}),
+                "has_separate_audio": has_separate_audio,
+                "audio_url": eff_audio_url,
+                "audio_headers": eff_audio_headers,
+                "audio_codec": eff_audio_codec,
+                "audio_format_id": eff_audio_fmt_id,
             })
 
         # Sort by height descending
@@ -222,25 +294,50 @@ class StreamExtractor:
 
     def resolve_stream_details(
         self, selected_format_id: Optional[str] = None
-    ) -> tuple[str, str, dict[str, str]]:
-        """Resolve the final stream direct URL, chosen quality label, and HTTP request headers.
+    ) -> StreamDetails:
+        """Resolve the final stream direct URL, chosen quality label, headers, and audio stream details.
 
-        Returns (stream_url, quality_label, http_headers).
+        Returns a StreamDetails instance which supports backwards-compatible 3-tuple unpacking
+        (stream_url, quality_label, http_headers) and attribute access for separate audio tracks.
         """
         formats = self.get_available_formats()
         if not formats:
             info = self.extract_metadata()
             stream_url = info.get("url", self.url)
             headers = info.get("http_headers", {})
-            return stream_url, "default", headers
+            return StreamDetails(
+                stream_url=stream_url,
+                quality_label="default",
+                headers=headers,
+                audio_url=None,
+                audio_headers=None,
+                audio_codec=None,
+                is_muxed=True,
+            )
 
         if selected_format_id:
             for fmt in formats:
                 if fmt["format_id"] == selected_format_id or fmt["resolution"] == selected_format_id:
-                    return fmt["url"], fmt["resolution"], fmt.get("http_headers", {})
+                    return StreamDetails(
+                        stream_url=fmt["url"],
+                        quality_label=fmt["resolution"],
+                        headers=fmt.get("http_headers", {}),
+                        audio_url=fmt.get("audio_url"),
+                        audio_headers=fmt.get("audio_headers"),
+                        audio_codec=fmt.get("audio_codec"),
+                        is_muxed=not fmt.get("has_separate_audio", False),
+                    )
 
         best = formats[0]
-        return best["url"], best["resolution"], best.get("http_headers", {})
+        return StreamDetails(
+            stream_url=best["url"],
+            quality_label=best["resolution"],
+            headers=best.get("http_headers", {}),
+            audio_url=best.get("audio_url"),
+            audio_headers=best.get("audio_headers"),
+            audio_codec=best.get("audio_codec"),
+            is_muxed=not best.get("has_separate_audio", False),
+        )
 
     def resolve_stream_url(self, selected_format_id: Optional[str] = None) -> tuple[str, str]:
         """Resolve the final stream direct URL and chosen quality label.

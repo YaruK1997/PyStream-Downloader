@@ -62,6 +62,12 @@
 | **TC-CL-05** | `tests/test_cli.py` | CLI 捕獲 `NeedsFullSnifferError` 與進程退出代碼轉換 | 驗證主程序精準以 `sys.exit(42)` 終止，供外部編排器或 Shell 腳本自動升級。 |
 | **TC-UT-04** | `tests/test_utils.py` | 系統依賴檢測加入 `check_playwright_support()` | 正確檢驗 Playwright 庫與本機 Chromium 二進位執行檔可用性。 |
 | **TC-SC-12** | `tests/test_stage2_self_check.py` | 階段 2 冒煙自檢：驗證 Exit Code 42 自適應升級協定與異常封裝 | 驗證 `NeedsFullSnifferError` 屬性、例外回溯與主調度器狀態碼對齊。 |
+| **TC-EX-07** | 	ests/test_extractor.py | 視訊軌無音訊 (codec == \'none\') 時自動探測最佳 AAC 音軌並封裝 StreamDetails | 驗證 StreamDetails 具備視訊/音訊雙直鏈與專屬標頭，向下相容 3-Tuple 解構。 |
+| **TC-EX-08** | 	ests/test_extractor.py | 原生內嵌音軌之串流不額外掛載獨立音訊 (is_muxed = True) | 驗證 udio_url 為 None，杜絕重複疊加音軌。 |
+| **TC-DL-04** | 	ests/test_downloader.py | FFmpeg 雙輸入命令組裝、-map 0:v:0 -map 1:a:0 映射與 A/V 時間戳同步參數 | 驗證兩組 -i 輸入、-fflags +genpts、-avoid_negative_ts make_zero、-max_interleave_delta 0 與 -shortest。 |
+| **TC-DL-05** | 	ests/test_downloader.py | 非 AAC 音訊（如 Opus）輸出至 MP4 時自適應轉碼 AAC 與重採樣同步 | 驗證輸出為 MP4 且音訊非 AAC 時自動轉換為 -c:a aac -b:a 192k -af aresample=async=1:first_pts=0。 |
+| **TC-DL-06** | 	ests/test_downloader.py | 音訊 URL 參數注入防禦（CWE-88） | 傳入以破折號開頭之 udio_url 立即引發 ValueError。 |
+| **TC-SC-13** | 	ests/test_stage2_self_check.py | 階段 2 冒煙自檢：驗證音軌探測、StreamDetails 與雙輸入混流 A/V 同步全鏈路整合 | 驗證格式探測至 FFmpeg 命令組裝之完整流水線一致性。 |
 
 ---
 

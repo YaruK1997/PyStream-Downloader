@@ -1,6 +1,3 @@
-"""PyStream-Downloader package.
+"""PyStream-Downloader package initialization."""
 
-A modular, robust video and live stream downloader based on yt-dlp, FFmpeg, and Python supervisor.
-"""
-
-__version__ = "1.3.0"
+__version__ = "1.4.0"

@@ -133,6 +133,20 @@
   - 退出碼 42 為標準 POSIX/Windows 數值信號，不攜帶或回顯任何機敏資訊（無 Token/Cookie/URL 外洩）。
   - 外部調度腳本（`deploy.ps1` / `deploy.sh`）以嚴格整數比對判斷升級，不使用 `eval` 或動態程式碼執行，徹底杜絕注入風險。
 
+### 3.12 雙輸入音訊 URL 與標頭參數安全審查 (Dual Input URL & Header Sanitization - CWE-78 / CWE-88)
+- **檢驗對象**：src/downloader.py 之 FFmpegDownloader.__init__ 與 uild_command。
+- **檢查重點**：傳入之獨立音訊 URL（udio_url）及專屬請求標頭（udio_headers）是否可能被利用於命令列引數注入或 CRLF 標頭走私。
+- **審核結果**：**通過 (PASSED)**
+  - 對 udio_url 實施與視訊 URL 相同的邊界安全校驗：嚴格禁止以破折號 - 開頭，阻斷任何將 URL 偽裝為 FFmpeg 參數選項之途徑。
+  - 對 udio_headers 同步執行 _validate_and_sanitize_headers 字元校驗，若包含 \r 或 \n 立即引發 ValueError，杜絕標頭注入漏洞。
+
+### 3.13 雙串流網路連線與記憶體交錯防禦 (Network & Interleaving Buffer Defense - CWE-400)
+- **檢驗對象**：FFmpegDownloader.build_command 雙輸入混流設定。
+- **檢查重點**：同時下載雙路 HTTP/HTTPS 串流時，封包到達延遲是否導致進程記憶體無限制膨脹或溢位。
+- **審核結果**：**通過 (PASSED)**
+  - 配置 -max_interleave_delta 0，解除固定長度緩衝佇列之強制超時截斷，由 FFmpeg 根據音畫時間戳動態平滑交錯，杜絕封包丟棄與非預期記憶體膨脹。
+  - 配置 -shortest 確保任一串流到達結尾時即刻終止寫入，防範無效音軌導致的無限循環掛起。
+
 ---
 
 ## 4. 階段 4 檢核簽署 (Gate Checklist Sign-Off)

@@ -236,6 +236,68 @@ class TestStage2SelfCheck(unittest.TestCase):
                 with self.assertRaises(NeedsFullSnifferError):
                     extractor.extract_metadata()
 
+    def test_13_separate_audio_muxing_and_av_sync(self):
+        """Verify separate audio stream matching, StreamDetails resolution, and dual-input FFmpeg A/V sync builder."""
+        mock_raw = {
+            "title": "YouTube 1080p Video",
+            "formats": [
+                {
+                    "format_id": "137",
+                    "height": 1080,
+                    "vcodec": "avc1",
+                    "acodec": "none",
+                    "tbr": 4500,
+                    "url": "http://video1080.googlevideo.com/videoplayback",
+                    "http_headers": {"User-Agent": "VideoUA"},
+                },
+                {
+                    "format_id": "140",
+                    "height": None,
+                    "vcodec": "none",
+                    "acodec": "mp4a.40.2",
+                    "ext": "m4a",
+                    "abr": 128,
+                    "url": "http://audio140.googlevideo.com/videoplayback",
+                    "http_headers": {"User-Agent": "AudioUA"},
+                },
+            ],
+        }
+        extractor = StreamExtractor("https://www.youtube.com/watch?v=sample")
+        extractor._raw_info = mock_raw
+
+        # 1. Format inspection matches separate audio
+        formats = extractor.get_available_formats()
+        self.assertEqual(len(formats), 1)
+        self.assertTrue(formats[0]["has_separate_audio"])
+        self.assertEqual(formats[0]["audio_url"], "http://audio140.googlevideo.com/videoplayback")
+
+        # 2. Details resolution provides both URLs
+        details = extractor.resolve_stream_details("1080p")
+        self.assertEqual(details.stream_url, "http://video1080.googlevideo.com/videoplayback")
+        self.assertEqual(details.audio_url, "http://audio140.googlevideo.com/videoplayback")
+        self.assertEqual(details.audio_codec, "mp4a.40.2")
+
+        # 3. Downloader assembles synchronized dual-input command
+        dl = FFmpegDownloader(
+            stream_url=details.stream_url,
+            output_path="C:/Downloads/video.mp4",
+            headers=details.headers,
+            audio_url=details.audio_url,
+            audio_headers=details.audio_headers,
+            audio_codec=details.audio_codec,
+        )
+        cmd = dl.build_command()
+        self.assertEqual(cmd.count("-i"), 2)
+        self.assertIn("-map", cmd)
+        self.assertIn("0:v:0", cmd)
+        self.assertIn("1:a:0", cmd)
+        self.assertIn("-fflags", cmd)
+        self.assertIn("+genpts", cmd)
+        self.assertIn("-avoid_negative_ts", cmd)
+        self.assertIn("make_zero", cmd)
+        self.assertIn("-max_interleave_delta", cmd)
+        self.assertIn("-shortest", cmd)
+
 
 if __name__ == "__main__":
     unittest.main()

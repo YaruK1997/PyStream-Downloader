@@ -290,3 +290,61 @@
                                       [ 啟動 Chromium 嗅探並無縫完成下載 ]
 +-------------------------------------------------------------------------------+
 ```
+
+
+---
+
+## 8. 獨立音軌識別與雙串流混流同步架構 (Dual-Stream Multiplexing & A/V Sync Topology - v1.4.0)
+
+`	ext
++-------------------------------------------------------------------------------+
+|             獨立音軌自動探測、雙輸入混流與音畫時間戳同步架構 (ASCII)              |
++-------------------------------------------------------------------------------+
+
+                  [ 目標串流規格 (如: YouTube 1080p / 4K / DASH) ]
+                                         │
+                                         ▼
+                               [ StreamExtractor ]
+                                         │
+                         ┌───────────────┴───────────────┐
+                         ▼                               ▼
+                 [ 視訊軌 (Video Track) ]        [ 最佳音訊軌 (Audio Track) ]
+                 - format: 137/299/399/401       - 優先順序:
+                 - vcodec: avc1 / vp9 / av01       1. AAC / m4a (如 140, 避開 -drc)
+                 - acodec: none (無視訊內建音軌)    2. Opus / WebM (如 251)
+                 - url: Video CDN 直鏈           - url: Audio CDN 直鏈
+                 - headers: Video 專屬標頭       - headers: Audio 專屬標頭
+                         │                               │
+                         └───────────────┬───────────────┘
+                                         │
+                                         ▼ (封裝為 StreamDetails)
+                               [ FFmpegDownloader ]
+                                         │
+                   ┌─────────────────────┴─────────────────────┐
+                   ▼                                           ▼
+          [ 第一輸入 (-i Video) ]                     [ 第二輸入 (-i Audio) ]
+          -reconnect 1 -reconnect_streamed 1          -reconnect 1 -reconnect_streamed 1
+          -headers <Video_Headers>                    -headers <Audio_Headers>
+                   │                                           │
+                   └─────────────────────┬─────────────────────┘
+                                         │
+                                         ▼
+            [ 串流映射與編碼策略 (Stream Mapping & Codec Adaptation) ]
+            - 映射對應軌道: -map 0:v:0 -map 1:a:0
+            - 視訊直拷無損: -c:v copy
+            - 音訊自適應:
+                若音軌為 AAC: -c:a copy -bsf:a aac_adtstoasc
+                若音軌為 Opus 且輸出為 MP4: -c:a aac -b:a 192k -af aresample=async=1:first_pts=0
+                                         │
+                                         ▼
+            [ 時間戳平移與交錯佇列保護 (A/V Sync & Interleaving Defense) ]
+            - -fflags +genpts (補齊封包 PTS 時間戳)
+            - -avoid_negative_ts make_zero (對齊起始零點，防負時間戳脫節)
+            - -max_interleave_delta 0 (雙網路串流封包交錯佇列防溢位)
+            - -shortest (最短串流結束即封裝，防畫面凍結)
+            - -movflags +faststart
+                                         │
+                                         ▼
+                         [ 最終成品 .mp4 (完美聲畫同步) ]
++-------------------------------------------------------------------------------+
+`

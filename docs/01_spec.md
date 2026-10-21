@@ -145,6 +145,21 @@
        - 若正常結束（Exit Code 0）或一般錯誤（Code 1），正常退出。
        - 若捕獲狀態碼 `42`，腳本立即在控制台顯示提示訊息，並自動升級以 `docker-compose --profile full run --rm downloader-full` 重新調度任務，全程無須使用者干預。
 
+
+### F9. 獨立音軌識別、雙串流混流與音畫時間戳同步機制 (Separate Audio Extraction, Dual-Stream Multiplexing & A/V Sync - v1.4.0 新增)
+- **目標場景**：YouTube 1080p/2K/4K 等高畫質串流及 DASH 格式網站，普遍將高畫質視訊軌 (codec == \'none\') 與音訊軌分離儲存。若僅下載視訊直鏈將導致成品影片無聲音或音畫不同步。
+- **核心實作**：
+  1. **最佳音軌自動探測 (Best Audio Matching)**：
+     - StreamExtractor 自動篩選無視訊之獨立音訊軌 (codec in (\'none\', None, \'\'), codec not in (\'none\', None, \'\'))。
+     - 容器格式相容性優先：針對 MP4 輸出，優先挑選 AAC/m4a 原生音訊軌（如 YouTube 140 軌，避開 -drc 動態範圍壓縮軌），次選高碼率音訊軌（如 Opus/WebM 251 軌）。
+  2. **雙輸入串流安全傳遞 (Dual Input Piping)**：
+     - 若選定畫質為分離軌道，
+esolve_stream_details() 封裝 StreamDetails 同步回傳視訊與音訊之 CDN 直鏈及各自專屬之 HTTP Request Headers，並保持 3-Tuple 解構之向下相容性。
+  3. **FFmpeg 雙流混流與時間戳嚴格同步 (FFmpeg Remuxing & A/V Sync)**：
+     - 指令結構：-i <VIDEO_URL> -i <AUDIO_URL> -map 0:v:0 -map 1:a:0。
+     - 視訊保持無損複製：-c:v copy。
+     - 音訊相容性自適應：若音軌為 AAC 則原生串流複製 (-c:a copy -bsf:a aac_adtstoasc)；若為 Opus/Vorbis 且輸出至 MP4，則自動啟動輕量轉碼 (-c:a aac -b:a 192k) 並啟用音訊重採樣同步 (-af aresample=async=1:first_pts=0)。
+     - 時間戳平移與交錯佇列保護：配置 -fflags +genpts -avoid_negative_ts make_zero -max_interleave_delta 0 -shortest，徹底消除起始 PTS 偏差、封包交錯佇列溢位與結尾畫面凍結問題。
 ---
 
 ## 3. CLI 介面與參數設計 (Command Line Interface)

@@ -49,7 +49,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.sniff_timeout, 25)
 
     def test_version_string(self):
-        self.assertEqual(__version__, "1.3.0")
+        self.assertEqual(__version__, "1.4.0")
 
     def test_cli_handles_needs_full_sniffer_exit_code_42(self):
         from unittest.mock import patch

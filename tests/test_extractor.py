@@ -128,6 +128,88 @@ class TestExtractor(unittest.TestCase):
             with self.assertRaises(ImportError):
                 extractor._ensure_ytdlp()
 
+    def test_separate_audio_stream_matching(self):
+        extractor = StreamExtractor("https://example.com/test_video")
+        mock_raw = {
+            "title": "YouTube 1080p Video",
+            "formats": [
+                {
+                    "format_id": "137",
+                    "height": 1080,
+                    "vcodec": "avc1.640028",
+                    "acodec": "none",
+                    "tbr": 4500,
+                    "url": "http://video1080.googlevideo.com/videoplayback",
+                    "http_headers": {"User-Agent": "VideoUA"},
+                },
+                {
+                    "format_id": "140",
+                    "height": None,
+                    "vcodec": "none",
+                    "acodec": "mp4a.40.2",
+                    "ext": "m4a",
+                    "abr": 128,
+                    "url": "http://audio140.googlevideo.com/videoplayback",
+                    "http_headers": {"User-Agent": "AudioUA"},
+                },
+                {
+                    "format_id": "251",
+                    "height": None,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                    "abr": 160,
+                    "url": "http://audio251.googlevideo.com/videoplayback",
+                },
+            ],
+        }
+        extractor._raw_info = mock_raw
+
+        formats = extractor.get_available_formats()
+        self.assertEqual(len(formats), 1)
+        fmt = formats[0]
+        self.assertTrue(fmt["has_separate_audio"])
+        self.assertEqual(fmt["audio_format_id"], "140")
+        self.assertEqual(fmt["audio_url"], "http://audio140.googlevideo.com/videoplayback")
+        self.assertEqual(fmt["audio_headers"], {"User-Agent": "AudioUA"})
+
+        # Test resolve_stream_details
+        details = extractor.resolve_stream_details("1080p")
+        self.assertEqual(details.stream_url, "http://video1080.googlevideo.com/videoplayback")
+        self.assertEqual(details.audio_url, "http://audio140.googlevideo.com/videoplayback")
+        self.assertEqual(details.audio_codec, "mp4a.40.2")
+        self.assertFalse(details.is_muxed)
+
+        # Backwards compatibility: 3-tuple unpacking
+        url, q, headers = details
+        self.assertEqual(url, "http://video1080.googlevideo.com/videoplayback")
+        self.assertEqual(q, "1080p")
+        self.assertEqual(headers, {"User-Agent": "VideoUA"})
+
+    def test_muxed_stream_does_not_attach_separate_audio(self):
+        extractor = StreamExtractor("https://example.com/test_video")
+        mock_raw = {
+            "title": "Muxed Stream",
+            "formats": [
+                {
+                    "format_id": "22",
+                    "height": 720,
+                    "vcodec": "avc1",
+                    "acodec": "mp4a",
+                    "url": "http://muxed.m3u8",
+                }
+            ],
+        }
+        extractor._raw_info = mock_raw
+        formats = extractor.get_available_formats()
+        self.assertEqual(len(formats), 1)
+        self.assertFalse(formats[0]["has_separate_audio"])
+        self.assertIsNone(formats[0]["audio_url"])
+
+        details = extractor.resolve_stream_details()
+        self.assertTrue(details.is_muxed)
+        self.assertIsNone(details.audio_url)
+
 
 if __name__ == "__main__":
     unittest.main()

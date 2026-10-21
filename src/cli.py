@@ -68,7 +68,13 @@ def interactive_select_quality(formats: list[dict]) -> str:
         res = fmt.get("resolution", "N/A")
         bitrate = fmt.get("bitrate_kbps", 0)
         vcodec = fmt.get("vcodec", "N/A")
-        print(f"  [{idx}] {res:<8} | 碼率: ~{bitrate} kbps | 編碼: {vcodec}")
+        audio_desc = ""
+        if fmt.get("has_separate_audio"):
+            a_codec = fmt.get("audio_codec") or "aac"
+            audio_desc = f" | 音軌: 獨立混流 ({a_codec})"
+        elif fmt.get("acodec") and fmt.get("acodec") != "none":
+            audio_desc = f" | 音軌: 內嵌 ({fmt.get('acodec')})"
+        print(f"  [{idx}] {res:<8} | 碼率: ~{bitrate} kbps | 編碼: {vcodec}{audio_desc}")
     print("=" * 60)
 
     while True:
@@ -165,8 +171,17 @@ def run_app():
     else:
         selected_format_id = interactive_select_quality(formats)
 
-    stream_url, quality_label, headers = extractor.resolve_stream_details(selected_format_id)
+    details = extractor.resolve_stream_details(selected_format_id)
+    stream_url = details.stream_url
+    quality_label = details.quality_label
+    headers = details.headers
+    audio_url = details.audio_url
+    audio_headers = details.audio_headers
+    audio_codec = details.audio_codec
+
     print(f"[INFO] 已選定畫質: {quality_label}")
+    if audio_url:
+        print(f"[INFO] 已匹配最佳音訊軌: {audio_codec} (啟用雙串流音畫同步混流)")
 
     # 4. 準備輸出路徑
     os.makedirs(args.output, exist_ok=True)
@@ -174,11 +189,14 @@ def run_app():
     output_path = os.path.join(args.output, out_filename)
     print(f"[INFO] 目標儲存路徑: {output_path}")
 
-    # 5. 啟動守護進程下載 (攜帶 HTTP Headers 避免分片取片遭遇 403)
+    # 5. 啟動守護進程下載 (攜帶 HTTP Headers 與音軌資訊)
     downloader = FFmpegDownloader(
         stream_url=stream_url,
         output_path=output_path,
         headers=headers,
+        audio_url=audio_url,
+        audio_headers=audio_headers,
+        audio_codec=audio_codec,
     )
     supervisor = ProcessSupervisor(downloader=downloader, max_retries=args.max_retries)
 

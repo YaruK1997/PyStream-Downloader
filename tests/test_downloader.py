@@ -91,6 +91,72 @@ class TestDownloader(unittest.TestCase):
         with self.assertRaises(ValueError):
             FFmpegDownloader("", "out.mp4")
 
+    def test_build_command_with_separate_audio_aac(self):
+        dl = FFmpegDownloader(
+            stream_url="http://video.m3u8",
+            output_path="C:/output/video.mp4",
+            headers={"User-Agent": "VideoUA"},
+            audio_url="http://audio.m3u8",
+            audio_headers={"User-Agent": "AudioUA"},
+            audio_codec="mp4a.40.2",
+        )
+        cmd = dl.build_command()
+
+        # Both inputs should be present
+        self.assertEqual(cmd.count("-i"), 2)
+        idx_v = cmd.index("-i")
+        self.assertEqual(cmd[idx_v + 1], "http://video.m3u8")
+        idx_a = cmd.index("-i", idx_v + 2)
+        self.assertEqual(cmd[idx_a + 1], "http://audio.m3u8")
+
+        # Mapping
+        self.assertIn("-map", cmd)
+        self.assertIn("0:v:0", cmd)
+        self.assertIn("1:a:0", cmd)
+
+        # Video copy, AAC audio copy
+        self.assertIn("-c:v", cmd)
+        self.assertIn("-c:a", cmd)
+        a_idx = cmd.index("-c:a")
+        self.assertEqual(cmd[a_idx + 1], "copy")
+        self.assertIn("-bsf:a", cmd)
+        self.assertIn("aac_adtstoasc", cmd)
+
+        # Sync flags
+        self.assertIn("-fflags", cmd)
+        self.assertIn("+genpts", cmd)
+        self.assertIn("-avoid_negative_ts", cmd)
+        self.assertIn("make_zero", cmd)
+        self.assertIn("-max_interleave_delta", cmd)
+        self.assertIn("0", cmd)
+        self.assertIn("-shortest", cmd)
+
+    def test_build_command_with_separate_audio_opus_into_mp4(self):
+        dl = FFmpegDownloader(
+            stream_url="http://video.m3u8",
+            output_path="C:/output/video.mp4",
+            audio_url="http://audio_opus.webm",
+            audio_codec="opus",
+        )
+        cmd = dl.build_command()
+
+        # Non-AAC into MP4 should transcode to AAC with resample sync
+        self.assertIn("-c:a", cmd)
+        a_idx = cmd.index("-c:a")
+        self.assertEqual(cmd[a_idx + 1], "aac")
+        self.assertIn("-b:a", cmd)
+        self.assertEqual(cmd[cmd.index("-b:a") + 1], "192k")
+        self.assertIn("-af", cmd)
+        self.assertIn("aresample=async=1:first_pts=0", cmd)
+
+    def test_audio_argument_injection_defense(self):
+        with self.assertRaises(ValueError):
+            FFmpegDownloader(
+                stream_url="http://valid.com",
+                output_path="out.mp4",
+                audio_url="-i malicious",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

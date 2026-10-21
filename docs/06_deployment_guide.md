@@ -160,6 +160,8 @@ docker inspect --format='{{json .State.Health}}' pystream-downloader-slim
 | **Windows 提示 Docker API 未連線** | Docker Desktop 服務尚未啟動 | 啟動 Docker Desktop，等待右下角圖標變綠後重試。 |
 | **下載檔案未出現在主機** | Volume 掛載路徑錯誤 | 確保命令中包含 `-v "$(pwd)/downloads:/app/downloads"`。 |
 | **容器內無法暫停串流** | 未附加 TTY / 終端 | 啟動時必須加上 `-it`（Compose 請確保配置 `stdin_open: true` 與 `tty: true`）。 |
+| **音軌缺失或影片無聲音** | 目標網站為 DASH 分離架構（如 YouTube 1080p+），音視訊為獨立串流 | v1.4.0 系統已全面內建獨立音軌探測與雙輸入混流，會自動匹配最佳音軌進行封裝。 |
+| **音畫不同步 (A/V Desync)** | 網路延遲抖動、時間戳偏移或非 AAC 音訊與 MP4 不相容 | v1.4.0 配置 -avoid_negative_ts make_zero -max_interleave_delta 0 消除時間戳偏差；Opus 音訊入 MP4 自動啟用 -af aresample=async=1:first_pts=0 重採樣同步。 |
 
 ---
 
