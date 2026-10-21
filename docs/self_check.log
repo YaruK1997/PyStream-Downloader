@@ -1,0 +1,19 @@
+test_01_sanitize_filename (test_stage2_self_check.TestStage2SelfCheck)
+Verify filename sanitization across special characters. ... ok
+test_02_mp4_integrity_checker (test_stage2_self_check.TestStage2SelfCheck)
+Verify MP4 container header validation. ... ok
+test_03_ffmpeg_command_builder (test_stage2_self_check.TestStage2SelfCheck)
+Verify FFmpeg command assembly with reconnection parameters. ... ok
+test_04_progress_parsing (test_stage2_self_check.TestStage2SelfCheck)
+Verify regex parsing of FFmpeg progress output. ... ok
+test_05_extractor_format_filtering (test_stage2_self_check.TestStage2SelfCheck)
+Verify format parsing and sorting by resolution. ... ok
+test_06_watcher_status_transitions (test_stage2_self_check.TestStage2SelfCheck)
+Verify stream watcher status detection logic. ... ok
+test_07_supervisor_pause_resume_mock (test_stage2_self_check.TestStage2SelfCheck)
+Verify supervisor pause and resume toggling. ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.007s
+
+OK

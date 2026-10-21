@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  pystream-downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pystream-downloader:latest
+    container_name: pystream-downloader
+    stdin_open: true  # -i for interactive mode
+    tty: true         # -t for interactive tty
+    volumes:
+      - ./downloads:/app/downloads
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: "no"
+    # Example usage:
+    # docker-compose run --rm pystream-downloader "https://example.com/stream" -q 1080p

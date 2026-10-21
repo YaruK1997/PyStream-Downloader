@@ -1,0 +1,60 @@
+"""Unit tests for src.extractor (TC-EX-01, TC-EX-02)."""
+
+import unittest
+from unittest.mock import MagicMock, patch
+
+from src.extractor import StreamExtractor
+
+
+class TestExtractor(unittest.TestCase):
+    """Test extractor logic and format prioritization."""
+
+    def test_extract_formats_sorting(self):
+        extractor = StreamExtractor("https://example.com/test_video")
+        mock_raw = {
+            "title": "Sample 4K Stream",
+            "formats": [
+                {"format_id": "4k", "height": 2160, "vcodec": "av01", "acodec": "opus", "tbr": 15000, "url": "http://4k.m3u8"},
+                {"format_id": "1080p", "height": 1080, "vcodec": "avc1", "acodec": "mp4a", "tbr": 5000, "url": "http://1080p.m3u8"},
+                {"format_id": "720p", "height": 720, "vcodec": "avc1", "acodec": "mp4a", "tbr": 2500, "url": "http://720p.m3u8"},
+                {"format_id": "audio", "height": None, "vcodec": "none", "acodec": "mp4a", "tbr": 128, "url": "http://audio.m3u8"},
+            ]
+        }
+        extractor._raw_info = mock_raw
+
+        formats = extractor.get_available_formats()
+        # Audio-only should be filtered out from video resolutions
+        self.assertEqual(len(formats), 3)
+        self.assertEqual(formats[0]["resolution"], "2160p")
+        self.assertEqual(formats[1]["resolution"], "1080p")
+        self.assertEqual(formats[2]["resolution"], "720p")
+
+    def test_resolve_stream_url_explicit_and_default(self):
+        extractor = StreamExtractor("https://example.com/test_video")
+        extractor._raw_info = {
+            "title": "Sample Stream",
+            "formats": [
+                {"format_id": "1080p", "height": 1080, "vcodec": "avc1", "url": "http://1080p.m3u8"},
+                {"format_id": "720p", "height": 720, "vcodec": "avc1", "url": "http://720p.m3u8"},
+            ]
+        }
+
+        # Resolve explicit
+        url, label = extractor.resolve_stream_url("720p")
+        self.assertEqual(url, "http://720p.m3u8")
+        self.assertEqual(label, "720p")
+
+        # Resolve default (best)
+        url_best, label_best = extractor.resolve_stream_url(None)
+        self.assertEqual(url_best, "http://1080p.m3u8")
+        self.assertEqual(label_best, "1080p")
+
+    def test_extractor_missing_ytdlp_error(self):
+        extractor = StreamExtractor("https://example.com/test")
+        with patch.dict("sys.modules", {"yt_dlp": None}):
+            with self.assertRaises(ImportError):
+                extractor._ensure_ytdlp()
+
+
+if __name__ == "__main__":
+    unittest.main()
