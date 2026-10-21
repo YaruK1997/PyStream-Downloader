@@ -3,4 +3,4 @@
 A modular, robust video and live stream downloader based on yt-dlp, FFmpeg, and Python supervisor.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

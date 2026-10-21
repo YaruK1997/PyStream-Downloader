@@ -2,6 +2,7 @@
 
 import unittest
 
+from src import __version__
 from src.cli import parse_arguments
 
 
@@ -16,6 +17,8 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.max_retries, 5)
         self.assertFalse(args.wait)
         self.assertFalse(args.no_pause)
+        self.assertEqual(args.impersonate, "chrome")
+        self.assertIsNone(args.cookies_from_browser)
 
     def test_parse_arguments_custom(self):
         custom = [
@@ -25,7 +28,9 @@ class TestCLI(unittest.TestCase):
             "--wait",
             "--poll-interval", "30",
             "--max-retries", "10",
-            "--no-pause"
+            "--no-pause",
+            "--impersonate", "firefox",
+            "--cookies-from-browser", "chrome",
         ]
         args = parse_arguments(custom)
         self.assertEqual(args.quality, "720p")
@@ -34,6 +39,11 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.poll_interval, 30)
         self.assertEqual(args.max_retries, 10)
         self.assertTrue(args.no_pause)
+        self.assertEqual(args.impersonate, "firefox")
+        self.assertEqual(args.cookies_from_browser, "chrome")
+
+    def test_version_string(self):
+        self.assertEqual(__version__, "1.1.0")
 
 
 if __name__ == "__main__":

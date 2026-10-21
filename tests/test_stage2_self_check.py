@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from src.downloader import FFmpegDownloader
 from src.extractor import StreamExtractor
 from src.supervisor import ProcessSupervisor
-from src.utils import sanitize_filename, verify_mp4_integrity
+from src.utils import check_impersonate_support, sanitize_filename, verify_mp4_integrity
 from src.watcher import StreamWatcher
 
 
@@ -44,7 +44,6 @@ class TestStage2SelfCheck(unittest.TestCase):
         """Verify MP4 container header validation."""
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
             tf_path = tf.name
-            # Write a mock MP4 header containing ftyp box (36 bytes + padding)
             tf.write(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41\x00\x00\x00\x08free" + b"\x00" * 32)
             tf.flush()
 
@@ -102,7 +101,7 @@ class TestStage2SelfCheck(unittest.TestCase):
                 {"format_id": "137", "height": 1080, "vcodec": "avc1", "acodec": "mp4a", "tbr": 4500, "url": "http://1080p.m3u8"},
                 {"format_id": "136", "height": 720, "vcodec": "avc1", "acodec": "mp4a", "tbr": 2500, "url": "http://720p.m3u8"},
                 {"format_id": "140", "height": None, "vcodec": "none", "acodec": "mp4a", "tbr": 128, "url": "http://audio.m3u8"},
-            ]
+            ],
         }
         extractor._raw_info = mock_info
         formats = extractor.get_available_formats()
@@ -117,21 +116,19 @@ class TestStage2SelfCheck(unittest.TestCase):
     def test_06_watcher_status_transitions(self):
         """Verify stream watcher status detection logic."""
         watcher = StreamWatcher("https://example.com/upcoming", poll_interval=5)
-        # Mocking yt_dlp extract_info
         mock_ytdlp = MagicMock()
         mock_ytdlp.YoutubeDL.return_value.__enter__.return_value.extract_info.return_value = {
             "live_status": "is_upcoming",
-            "title": "Upcoming Stream"
+            "title": "Upcoming Stream",
         }
         with patch.dict("sys.modules", {"yt_dlp": mock_ytdlp}):
             is_live, status, info = watcher.check_status()
             self.assertFalse(is_live)
             self.assertEqual(status, "upcoming")
 
-        # Now mock live status
         mock_ytdlp.YoutubeDL.return_value.__enter__.return_value.extract_info.return_value = {
             "live_status": "is_live",
-            "title": "Live Now"
+            "title": "Live Now",
         }
         with patch.dict("sys.modules", {"yt_dlp": mock_ytdlp}):
             is_live, status, info = watcher.check_status()
@@ -143,12 +140,10 @@ class TestStage2SelfCheck(unittest.TestCase):
         downloader = FFmpegDownloader("url", "out.mp4")
         supervisor = ProcessSupervisor(downloader)
 
-        # Mock current process
         mock_proc = MagicMock()
         mock_proc.pid = 99999
         supervisor.current_process = mock_proc
 
-        # Mock psutil
         mock_psutil = MagicMock()
         mock_psutil_proc = MagicMock()
         mock_psutil.Process.return_value = mock_psutil_proc
@@ -162,6 +157,50 @@ class TestStage2SelfCheck(unittest.TestCase):
             self.assertTrue(supervisor.resume())
             self.assertFalse(supervisor.is_paused)
             mock_psutil_proc.resume.assert_called_once()
+
+    def test_08_impersonate_support_check(self):
+        """Verify check_impersonate_support detects curl_cffi and ImpersonateTarget."""
+        self.assertTrue(check_impersonate_support())
+
+    def test_09_downloader_headers_and_crlf_defense(self):
+        """Verify FFmpegDownloader header injection defense and command formatting."""
+        headers = {"User-Agent": "TestUA/1.0", "Referer": "https://example.com/"}
+        dl = FFmpegDownloader("http://stream.m3u8", "out.mp4", headers=headers)
+        cmd = dl.build_command()
+        self.assertIn("-headers", cmd)
+
+        # CRLF injection attempt
+        with self.assertRaises(ValueError):
+            FFmpegDownloader("http://stream.m3u8", "out.mp4", headers={"Bad": "Header\r\nInjected: True"})
+
+    def test_10_extractor_anti_bot_options_and_headers(self):
+        """Verify StreamExtractor anti-bot options and header details extraction."""
+        extractor = StreamExtractor(
+            "https://example.com/video",
+            impersonate="chrome",
+            cookies_from_browser="chrome",
+        )
+        opts = extractor._build_ydl_opts()
+        self.assertIn("impersonate", opts)
+        self.assertIn("cookiesfrombrowser", opts)
+
+        extractor._raw_info = {
+            "title": "Cloudflare Protected Stream",
+            "http_headers": {"User-Agent": "ChromeUA"},
+            "formats": [
+                {
+                    "format_id": "1080p",
+                    "height": 1080,
+                    "vcodec": "avc1",
+                    "url": "http://live.m3u8",
+                    "http_headers": {"User-Agent": "ChromeUA", "Cookie": "cf_clearance=xyz"},
+                }
+            ],
+        }
+        url, quality, headers = extractor.resolve_stream_details("1080p")
+        self.assertEqual(url, "http://live.m3u8")
+        self.assertEqual(quality, "1080p")
+        self.assertIn("Cookie", headers)
 
 
 if __name__ == "__main__":

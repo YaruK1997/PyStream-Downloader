@@ -1,4 +1,4 @@
-"""Unit tests for src.extractor (TC-EX-01, TC-EX-02)."""
+"""Unit tests for src.extractor (TC-EX-01, TC-EX-02, TC-EX-03, TC-EX-04)."""
 
 import unittest
 from unittest.mock import MagicMock, patch
@@ -7,7 +7,7 @@ from src.extractor import StreamExtractor
 
 
 class TestExtractor(unittest.TestCase):
-    """Test extractor logic and format prioritization."""
+    """Test extractor logic, format prioritization, and anti-bot impersonation options."""
 
     def test_extract_formats_sorting(self):
         extractor = StreamExtractor("https://example.com/test_video")
@@ -18,7 +18,7 @@ class TestExtractor(unittest.TestCase):
                 {"format_id": "1080p", "height": 1080, "vcodec": "avc1", "acodec": "mp4a", "tbr": 5000, "url": "http://1080p.m3u8"},
                 {"format_id": "720p", "height": 720, "vcodec": "avc1", "acodec": "mp4a", "tbr": 2500, "url": "http://720p.m3u8"},
                 {"format_id": "audio", "height": None, "vcodec": "none", "acodec": "mp4a", "tbr": 128, "url": "http://audio.m3u8"},
-            ]
+            ],
         }
         extractor._raw_info = mock_raw
 
@@ -33,10 +33,11 @@ class TestExtractor(unittest.TestCase):
         extractor = StreamExtractor("https://example.com/test_video")
         extractor._raw_info = {
             "title": "Sample Stream",
+            "http_headers": {"User-Agent": "TestUA/1.0", "Referer": "https://example.com/"},
             "formats": [
                 {"format_id": "1080p", "height": 1080, "vcodec": "avc1", "url": "http://1080p.m3u8"},
                 {"format_id": "720p", "height": 720, "vcodec": "avc1", "url": "http://720p.m3u8"},
-            ]
+            ],
         }
 
         # Resolve explicit
@@ -48,6 +49,45 @@ class TestExtractor(unittest.TestCase):
         url_best, label_best = extractor.resolve_stream_url(None)
         self.assertEqual(url_best, "http://1080p.m3u8")
         self.assertEqual(label_best, "1080p")
+
+    def test_resolve_stream_details_with_headers(self):
+        extractor = StreamExtractor("https://example.com/test_video")
+        headers = {"User-Agent": "CustomUA", "Referer": "https://example.com"}
+        extractor._raw_info = {
+            "title": "Stream With Headers",
+            "formats": [
+                {
+                    "format_id": "1080p",
+                    "height": 1080,
+                    "vcodec": "avc1",
+                    "url": "http://1080p.m3u8",
+                    "http_headers": headers,
+                }
+            ],
+        }
+
+        url, quality, res_headers = extractor.resolve_stream_details("1080p")
+        self.assertEqual(url, "http://1080p.m3u8")
+        self.assertEqual(quality, "1080p")
+        self.assertEqual(res_headers, headers)
+
+    def test_impersonate_and_cookies_ydl_opts(self):
+        extractor = StreamExtractor(
+            "https://example.com/test",
+            impersonate="chrome",
+            cookies_from_browser="firefox",
+        )
+        opts = extractor._build_ydl_opts()
+        self.assertIn("impersonate", opts)
+        self.assertIn("extractor_args", opts)
+        self.assertEqual(opts["extractor_args"]["generic"]["impersonate"], ["chrome"])
+        self.assertEqual(opts["cookiesfrombrowser"], ("firefox", None, None, None))
+
+    def test_impersonate_disabled(self):
+        extractor = StreamExtractor("https://example.com/test", impersonate="none")
+        opts = extractor._build_ydl_opts()
+        self.assertNotIn("impersonate", opts)
+        self.assertNotIn("extractor_args", opts)
 
     def test_extractor_missing_ytdlp_error(self):
         extractor = StreamExtractor("https://example.com/test")

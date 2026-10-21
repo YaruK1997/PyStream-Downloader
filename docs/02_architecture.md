@@ -47,32 +47,34 @@
 ## 2. 模組職責與介面契約 (Interface Contracts)
 
 ### 模組 1: `src/watcher.py` (`StreamWatcher`)
-- **核心職責**：定時輪詢尚未開播之即時串流（如 YouTube Upcoming），直到串流就緒。
+- **核心職責**：定時輪詢尚未開播之即時串流（如 YouTube Upcoming），直到串流就緒。支援瀏覽器指紋偽裝以避開 Cloudflare 阻斷。
 - **公開介面**：
   ```python
   class StreamWatcher:
-      def __init__(self, url: str, poll_interval: int = 15): ...
-      def check_status(self) -> tuple[bool, str]: ...
+      def __init__(self, url: str, poll_interval: int = 15, impersonate: Optional[str] = "chrome", cookies_from_browser: Optional[str] = None): ...
+      def check_status(self) -> tuple[bool, str, dict]: ...
       def wait_until_live(self, on_tick=None) -> bool: ...
   ```
 
 ### 模組 2: `src/extractor.py` (`StreamExtractor`)
-- **核心職責**：調用 `yt-dlp` 解析串流標題、可用解析度清單與直連串流 URL。
+- **核心職責**：調用 `yt-dlp` 解析串流標題、可用解析度清單、直連串流 URL 與 HTTP Request Headers。
 - **公開介面**：
   ```python
   class StreamExtractor:
-      def __init__(self, url: str): ...
+      def __init__(self, url: str, impersonate: Optional[str] = "chrome", cookies_from_browser: Optional[str] = None): ...
       def extract_metadata(self) -> dict: ...
       def get_available_formats(self) -> list[dict]: ...
+      def get_http_headers(self, selected_format_id: Optional[str] = None) -> dict[str, str]: ...
+      def resolve_stream_details(self, selected_format_id: Optional[str] = None) -> tuple[str, str, dict[str, str]]: ...
       def resolve_stream_url(self, format_id: str = None) -> tuple[str, str]: ...
   ```
 
 ### 模組 3: `src/downloader.py` (`FFmpegDownloader`)
-- **核心職責**：組裝 FFmpeg 參數，以直接流拷貝模式（`-c copy`）啟動子進程並解析進度。
+- **核心職責**：組裝 FFmpeg 參數，以直接流拷貝模式（`-c copy`）啟動子進程並解析進度；注入防禦性 HTTP Headers 防止 403。
 - **公開介面**：
   ```python
   class FFmpegDownloader:
-      def __init__(self, stream_url: str, output_path: str): ...
+      def __init__(self, stream_url: str, output_path: str, headers: Optional[dict[str, str]] = None): ...
       def build_command(self) -> list[str]: ...
       def start_process(self) -> subprocess.Popen: ...
       def parse_progress(self, line: str) -> dict: ...
@@ -135,8 +137,57 @@
 
 ## 4. 自我驗證設計 (Self-Verification Strategy)
 - 建立單元自驗測試腳本 `tests/test_stage2_self_check.py`，於編寫完成後以 Python 執行。
-- 檢驗重點：
+- 檢驗重點（共 10 項全自動驗證）：
   1. 檔名清理器正常過濾 Windows 非法字元（`\ / : * ? " < > |`）。
-  2. 格式解析器與 FFmpeg 命令列參數組裝正確性。
-  3. 模擬子進程掛起（`psutil.suspend`）與恢復（`resume`）之狀態正確性。
-  4. 驗證日誌記錄於 `docs/self_check.log`。
+  2. MP4 檔案頭封裝有效性檢查（atom box 驗證）。
+  3. FFmpeg 命令列參數組裝與斷線重連參數正確性。
+  4. FFmpeg 正則日誌提取與進度指標過濾。
+  5. 格式解析器畫質排序與音訊過濾。
+  6. 開播監聽器狀態轉移（Upcoming -> Live）。
+  7. 模擬子進程掛起（`psutil.suspend`）與恢復（`resume`）之狀態正確性。
+  8. `curl_cffi` 與 `ImpersonateTarget` 偽裝支援檢測。
+  9. `FFmpegDownloader` 標頭組裝與 CRLF 注入阻斷防禦。
+  10. `StreamExtractor` 反爬蟲參數與 HTTP Headers 傳遞鏈路。
+- 驗證日誌記錄於 `docs/self_check.log`。
+
+---
+
+## 5. 反爬蟲防禦與網路指紋偽裝架構 (Anti-Bot & Impersonation Pipeline - v1.1.0)
+
+```text
++-------------------------------------------------------------------------------+
+|             Cloudflare 反爬蟲穿透與 HTTP Headers 傳遞管線 (Pipeline)            |
++-------------------------------------------------------------------------------+
+
+  [ 目標 URL / 串流來源 ]
+            │
+            ▼ (遭遇 Cloudflare WAF / Anti-Bot 403)
+  [ StreamExtractor / StreamWatcher ]
+            │
+            ├─► 1. 啟用 curl_cffi 網路層驅動
+            │      - 偽造真實瀏覽器 TLS 握手指紋 (JA3 / JA4)
+            │      - 模擬 HTTP/2 幀序列與加密套件
+            │      - ydl_opts: impersonate = ImpersonateTarget.from_str('chrome')
+            │
+            ├─► 2. Generic Extractor 參數注入
+            │      - extractor_args = {'generic': {'impersonate': ['chrome']}}
+            │
+            ├─► 3. 瀏覽器 Cookies 提取 (可選)
+            │      - 讀取 Chrome / Firefox / Edge 本機憑證以通過驗證碼挑戰
+            │
+            ▼ (解析成功，取得 Master Playlist 與請求標頭)
+  [ HTTP Request Headers (User-Agent, Referer, Cookie) ]
+            │
+            ▼ (CRLF 注入安全檢驗)
+  [ FFmpegDownloader ]
+            │
+            ├─► 格式化為: -headers "Header1: Val1\r\nHeader2: Val2\r\n"
+            │   (置於 -i 參數之前以作用於串流協定請求)
+            │
+            ▼
+  [ FFmpeg Worker Subprocess ]
+            │ (拉取 m3u8 分片，保持與瀏覽器相同憑證特徵)
+            ▼
+  [ 成功錄製，杜絕分片 403 阻斷 ]
++-------------------------------------------------------------------------------+
+```

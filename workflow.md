@@ -198,7 +198,7 @@
   1. 輕量化映像檔建置：撰寫符合最佳實踐的 `Dockerfile`（多階段構建 Multi-stage build、非 root 使用者權限）。
   2. 服務編排：撰寫 `docker-compose.yml`，定義網路隔離、資料持久化（Volume）與資源限制。
   3. 部署驗證：執行容器啟動測試與 Healthcheck 探針，驗證腳本自動重啟與環境變數載入。
-- **產出文件**：`Dockerfile`、`docker-compose.yml`、`deploy.sh` / `deploy.ps1`、`docs/06_deployment_guide.md`。
+- **產出文件**：`Dockerfile`、`docker-compose.yml`、`deploy.sh` / `deploy.ps1`、`docs/06_deployment_guide.md`、`docs/07_changelog.md`。
 
 ---
 

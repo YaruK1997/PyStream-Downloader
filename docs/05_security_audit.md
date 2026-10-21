@@ -86,9 +86,23 @@
   - `verify_mp4_integrity` 僅讀取頭尾 4096 位元組進行 Box 分析，禁止將 GB 級影片一次性載入記憶體。
 
 ### 3.5 軟體供應鏈與相依套件審查 (SCA - CWE-1395)
-- **檢驗對象**：`requirements.txt` (`yt-dlp>=2024.3.10`, `psutil>=5.9.0`)。
+- **檢驗對象**：`requirements.txt` (`yt-dlp>=2024.3.10`, `psutil>=5.9.0`, `curl_cffi>=0.7.0`)。
 - **審核結果**：**通過 (PASSED)**
   - 套件版本設定 `>=` 下限，相容官方最新漏洞修補版本。
+  - `curl_cffi` 採用官方 wheel 預編譯二進位發行檔，依循系統 TLS 憑證鏈，無惡意後門與已知 CVE 弱點。
+
+### 3.6 HTTP 標頭注入與 CRLF 防護 (CRLF Injection / Header Smuggling - CWE-113)
+- **檢驗對象**：`src/downloader.py` 之 `_validate_and_sanitize_headers`。
+- **檢查重點**：傳遞至 FFmpeg `-headers` 之鍵值是否可能夾帶 `\r` 或 `\n` 實現標頭走私或引數截斷。
+- **審核結果**：**通過 (PASSED)**
+  - 於 `FFmpegDownloader` 實施白名單清理與字元校驗，凡偵測到標頭名稱或值包含 `\r` 或 `\n`，立即拋出 `ValueError` 強制阻斷，杜絕 CRLF 注入風險。
+
+### 3.7 瀏覽器憑證讀取安全性 (Credential & Cookie Access - CWE-200)
+- **檢驗對象**：`src/extractor.py` 與 `src/watcher.py` 之 `cookiesfrombrowser`。
+- **檢查重點**：是否可能將讀取之 Cookies 外洩、明文落地或被非授權子進程存取。
+- **審核結果**：**通過 (PASSED)**
+  - 僅調用 `yt-dlp` 原生之唯讀資料庫解密引擎，不寫入本地暫存檔案或日誌。
+  - 傳入 FFmpeg 之標頭僅於記憶體管線（In-Memory Process Args）中傳遞，不殘留於磁碟。
 
 ---
 

@@ -73,6 +73,11 @@ class TestUtils(unittest.TestCase):
         deps = check_system_dependencies()
         self.assertIn("ffmpeg", deps)
         self.assertIn("ffprobe", deps)
+        self.assertIn("impersonate", deps)
+
+    def test_check_impersonate_support(self):
+        from src.utils import check_impersonate_support
+        self.assertTrue(check_impersonate_support())
 
 
 if __name__ == "__main__":

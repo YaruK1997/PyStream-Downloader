@@ -70,9 +70,20 @@ def verify_mp4_integrity(filepath: str) -> bool:
         return False
 
 
+def check_impersonate_support() -> bool:
+    """Check if curl_cffi and yt-dlp impersonation features are available."""
+    try:
+        import curl_cffi  # noqa: F401
+        from yt_dlp.networking.impersonate import ImpersonateTarget  # noqa: F401
+        return True
+    except (ImportError, Exception):
+        return False
+
+
 def check_system_dependencies() -> dict[str, bool]:
     """Check availability of external tools and core packages."""
     return {
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "ffprobe": shutil.which("ffprobe") is not None,
+        "impersonate": check_impersonate_support(),
     }

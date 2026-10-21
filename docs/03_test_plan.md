@@ -50,6 +50,11 @@
 | **TC-DL-02** | `tests/test_downloader.py` | FFmpeg stderr 進度日誌解析：標準行、缺少 speed 行、隨機非進度行 | 正確擷取 time、bitrate 與 speed，無解析異常。 |
 | **TC-SV-01** | `tests/test_supervisor.py` | 模擬 FFmpeg 異常崩潰（Exit code != 0）觸發自動重試 | 重試次數遞增，觸發指數退避睡眠，超限後回傳 False。 |
 | **TC-SV-02** | `tests/test_supervisor.py` | 模擬 psutil 進程掛起（suspend）與恢復（resume）狀態流轉 | `is_paused` 狀態精確切換，重複掛起不重複調用。 |
+| **TC-EX-03** | `tests/test_extractor.py` | 瀏覽器指紋偽裝選項（`impersonate=chrome` / `none`）與 generic extractor 參數組裝 | 驗證 `ImpersonateTarget` 實例及 `extractor_args` 正確配置。 |
+| **TC-EX-04** | `tests/test_extractor.py` | 讀取 Cookies 與提取串流專屬 HTTP Request Headers | 驗證 `cookiesfrombrowser` 元組與 `http_headers` 字典完整回傳。 |
+| **TC-DL-03** | `tests/test_downloader.py` | FFmpeg `-headers` 組裝與 CRLF 注入安全性防禦 | 格式化 `\r\n` 串列且置於 `-i` 之前；遇換行字元時阻斷並拋出 `ValueError`。 |
+| **TC-CL-01** | `tests/test_cli.py` | CLI 參數解析、`--version` 顯示、`--impersonate` 與 `--cookies-from-browser` | 驗證預設值（chrome）與自訂瀏覽器設定解析無誤。 |
+| **TC-UT-03** | `tests/test_utils.py` | 系統依賴檢測加入 `check_impersonate_support()` | 正確識別 `curl_cffi` 與 `yt-dlp` 指紋庫就緒狀態。 |
 
 ---
 

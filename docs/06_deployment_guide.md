@@ -25,7 +25,7 @@
        | 容器內部環境 (pystream-downloader:latest)                |
        | - 基礎映像檔: python:3.10-slim                           |
        | - 系統套件: FFmpeg 6.x+, ca-certificates, curl           |
-       | - Python 環境: yt-dlp, psutil                            |
+       | - Python 環境: yt-dlp, psutil, curl_cffi                 |
        | - 安全身份: 非 root 帳號 appuser (UID 1000)              |
        | - 健康檢查 (Healthcheck): 探針檢測 FFmpeg 與模組完整性   |
        +─────────────────────────────────────────────────────────+
@@ -97,7 +97,7 @@ python main.py "https://example.com/stream"
 容器內建自定義 Healthcheck 探針：
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD python -c "import yt_dlp, psutil, shutil; assert shutil.which('ffmpeg')" || exit 1
+    CMD python -c "import yt_dlp, psutil, curl_cffi, shutil; assert shutil.which('ffmpeg')" || exit 1
 ```
 
 檢驗指令：
@@ -115,6 +115,7 @@ docker inspect --format='{{json .State.Health}}' pystream-downloader
 | **Windows 提示 Docker API 未連線** | Docker Desktop 服務尚未啟動 | 啟動 Docker Desktop，等待右下角鯨魚圖標變綠後重試。 |
 | **下載檔案未出現在主機** | Volume 掛載路徑錯誤 | 確保命令中包含 `-v "$(pwd)/downloads:/app/downloads"`。 |
 | **容器內無法暫停串流** | 未附加 TTY / 終端 | 啟動時必須加上 `-it`（Compose 請確保配置 `stdin_open: true` 與 `tty: true`）。 |
+| **遭遇 Cloudflare 403 Challenge** | 目標網站開啟了 WAF 防護 | 容器內預設已安裝 `curl_cffi` 並自動啟用 Chrome 偽裝；若遇硬性 Turnstile 驗證，可傳入 `--cookies-from-browser` 或改用已提取之 m3u8 直鏈。 |
 
 ---
 

@@ -115,6 +115,15 @@
   - **熱鍵觸發**：監聽鍵盤輸入（`p` 鍵或 `Space` 空白鍵）。
   - **狀態提示**：終端進度條切換為黃色標籤 `[PAUSED - 按 'p' 或空白鍵繼續]`，恢復時變更為綠色 `[DOWNLOADING]`。
 
+### F6. Cloudflare 反爬蟲繞過機制與瀏覽器指紋偽裝 (Anti-Bot Bypass & Impersonation - v1.1.0 新增)
+- **目標場景**：目標串流網站掛載 Cloudflare WAF / Anti-Bot 防禦時，防止 yt-dlp 通用解析器觸發 HTTP 403 Forbidden 挑戰。
+- **核心實作**：
+  1. **TLS / HTTP2 網路指紋偽裝**：整合 `curl_cffi`，透過 `yt_dlp.networking.impersonate.ImpersonateTarget` 模擬真實桌面瀏覽器（預設 `chrome`，亦支援 `firefox`、`safari`、`edge`）。
+  2. **Generic Extractor 參數注入**：自動注入 `--extractor-args "generic:impersonate=<target>"`，確保第三方網頁提取串流時通過 Cloudflare 被動式驗證。
+  3. **本機瀏覽器 Cookies 連動**：支援 `--cookies-from-browser`，自動讀取指定瀏覽器之安全憑證（如 `cf_clearance`），因應主動式 JavaScript 挑戰。
+  4. **Downloader HTTP Headers 貫穿**：將 yt-dlp 解析出的 HTTP Request Headers（含 User-Agent、Referer、Cookie）貫穿傳遞至 FFmpeg 下載指令之 `-headers`，杜絕 TS / m4s 媒體分片取片階段之 403 連線拒絕。
+  5. **安全防護防禦**：對傳入 FFmpeg 之標頭鍵值實施嚴格 CRLF 注入過濾，防止標頭走私或非預期命令注入。
+
 ---
 
 ## 3. CLI 介面與參數設計 (Command Line Interface)
@@ -124,13 +133,16 @@
   python main.py <URL> [OPTIONS]
 
 選項說明：
-  <URL>                    目標影片或直播網址（必填）
-  -q, --quality <QUALITY>  指定畫質 (例如: 1080p, 720p, best) [預設: 互動選擇]
-  -o, --output <DIR>       指定儲存目錄 [預設: ./downloads]
-  --wait                   啟用開播監聽模式（若未開播則自動等待）
-  --poll-interval <SEC>    開播監聽輪詢間隔秒數 [預設: 15]
-  --max-retries <NUM>      下載斷線最大重試次數 [預設: 5]
-  --no-pause               停用鍵盤熱鍵監聽（適用於背景無頭模式運行）
+  <URL>                                目標影片或直播網址（必填）
+  -v, --version                        顯示工具版本號 (v1.1.0)
+  -q, --quality <QUALITY>              指定畫質 (例如: 1080p, 720p, best) [預設: 互動選擇]
+  -o, --output <DIR>                   指定儲存目錄 [預設: ./downloads]
+  --wait                               啟用開播監聽模式（若未開播則自動等待）
+  --poll-interval <SEC>                開播監聽輪詢間隔秒數 [預設: 15]
+  --max-retries <NUM>                  下載斷線最大重試次數 [預設: 5]
+  --no-pause                           停用鍵盤熱鍵監聽（適用於背景無頭模式運行）
+  --impersonate <BROWSER>              啟用瀏覽器網路指紋偽裝 (預設: chrome，設為 none 關閉)
+  --cookies-from-browser <BROWSER>     從指定瀏覽器讀取 Cookies (chrome/firefox/edge/safari)
 ```
 
 ---
@@ -139,11 +151,12 @@
 
 | 模組檔案 | 核心類別 / 函數 | 職責定義 |
 | :--- | :--- | :--- |
-| `src/watcher.py` | `StreamWatcher` | 負責探測串流狀態 (`is_live`)，實作定時輪詢與倒數計時器。 |
-| `src/extractor.py` | `StreamExtractor` | 包裝 `yt-dlp`，負責解析 Master Playlist、提取可用畫質規格與目標 URL。 |
-| `src/downloader.py` | `FFmpegDownloader` | 封裝 FFmpeg 子進程生成、參數組裝、輸出日誌過濾與進度回報。 |
+| `src/watcher.py` | `StreamWatcher` | 負責探測串流狀態 (`is_live`)，支援 Impersonate 與 Cookies 輪詢防 403。 |
+| `src/extractor.py` | `StreamExtractor` | 包裝 `yt-dlp`，支援瀏覽器指紋偽裝、提取可用畫質、解析目標 URL 與 HTTP Headers。 |
+| `src/downloader.py` | `FFmpegDownloader` | 封裝 FFmpeg 進程、注入安全 HTTP Headers、進程隔離與進度回報。 |
 | `src/supervisor.py` | `ProcessSupervisor` | 負責進程生命週期管理、崩潰自動重啟、以及調用 `psutil` 執行 suspend/resume。 |
-| `src/cli.py` | `main()` | 參數解析（`argparse`）、選單互動呈現、熱鍵監聽協調。 |
+| `src/utils.py` | 工具函數群 | 檔名安全清理、MP4 封裝完整性校驗、外部依賴與 `curl_cffi` 偽裝支援檢測。 |
+| `src/cli.py` | `run_app()` | 參數解析（`argparse`）、選單呈現、版本回報、反爬蟲參數協調。 |
 
 ---
 
@@ -151,6 +164,8 @@
 
 | 異常情境 (Edge Case) | 系統預期防禦行為 |
 | :--- | :--- |
+| **目標網站觸發 Cloudflare 403** | 預設啟用 `impersonate=chrome` 與 `curl_cffi` 模擬瀏覽器 TLS 指紋；未安裝時主動警告引導安裝。 |
+| **HTTP 標頭存在 CRLF 注入嘗試** | `FFmpegDownloader` 檢驗標頭鍵值，發現 `\r` 或 `\n` 立即引發 `ValueError` 阻斷。 |
 | **系統未安裝 ffmpeg / ffprobe** | 啟動時即刻檢查 `shutil.which('ffmpeg')`，若缺失則印出明確安裝指引並優雅退出（Exit 1）。 |
 | **目標串流開播前被創作者取消** | 輪詢期間若偵測到影片狀態轉為 `private`、`deleted` 或 `rejected`，主動終止監聽並發出告警。 |
 | **影片標題包含作業系統非法字元** | 檔名自動調用安全清理函數，過濾 `\ / : * ? " < > \|` 等字元，防止磁碟寫入崩潰。 |

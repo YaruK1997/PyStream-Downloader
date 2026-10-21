@@ -1,5 +1,5 @@
 # Stage 1: Base image with FFmpeg and Python
-FROM python:3.10-slim
+FROM python:3.15-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -32,9 +32,9 @@ RUN mkdir -p /app/downloads && \
 # Switch to non-root user
 USER appuser
 
-# Healthcheck to verify Python runtime, dependencies, and FFmpeg binary
+# Healthcheck to verify Python runtime, dependencies (including curl_cffi for impersonation), and FFmpeg binary
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD python -c "import yt_dlp, psutil, shutil; assert shutil.which('ffmpeg')" || exit 1
+    CMD python -c "import yt_dlp, psutil, curl_cffi, shutil; assert shutil.which('ffmpeg')" || exit 1
 
 # Default volume mount point
 VOLUME ["/app/downloads"]

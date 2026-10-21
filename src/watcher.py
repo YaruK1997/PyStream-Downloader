@@ -1,20 +1,58 @@
 """Live stream status watcher and polling module."""
 
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 
 class StreamWatcher:
     """Monitors upcoming, scheduled, or offline live streams and polls until they go live."""
 
-    def __init__(self, url: str, poll_interval: int = 15):
+    def __init__(
+        self,
+        url: str,
+        poll_interval: int = 15,
+        impersonate: Optional[str] = "chrome",
+        cookies_from_browser: Optional[str] = None,
+    ):
         self.url = url
         self.poll_interval = max(5, poll_interval)
+        self.impersonate = impersonate if impersonate and impersonate.lower() not in ("none", "false", "off") else None
+        self.cookies_from_browser = cookies_from_browser
         self._is_cancelled = False
 
     def cancel(self):
         """Cancel ongoing wait loop."""
         self._is_cancelled = True
+
+    def _build_ydl_opts(self) -> dict[str, Any]:
+        """Build yt-dlp options dictionary including anti-bot impersonation and cookies."""
+        ydl_opts: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": False,
+        }
+
+        if self.impersonate:
+            try:
+                from yt_dlp.networking.impersonate import ImpersonateTarget
+                ydl_opts["impersonate"] = ImpersonateTarget.from_str(self.impersonate)
+                ydl_opts["extractor_args"] = {
+                    "generic": {
+                        "impersonate": [self.impersonate]
+                    }
+                }
+            except (ImportError, AttributeError, ValueError, Exception):
+                ydl_opts["extractor_args"] = {
+                    "generic": {
+                        "impersonate": [self.impersonate]
+                    }
+                }
+
+        if self.cookies_from_browser:
+            ydl_opts["cookiesfrombrowser"] = (self.cookies_from_browser, None, None, None)
+
+        return ydl_opts
 
     def check_status(self) -> tuple[bool, str, dict]:
         """Check current live status of the URL.
@@ -26,12 +64,7 @@ class StreamWatcher:
         except ImportError:
             raise ImportError("未安裝 yt-dlp 套件。請先執行: pip install -r requirements.txt")
 
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "extract_flat": False,
-        }
+        ydl_opts = self._build_ydl_opts()
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -69,7 +102,6 @@ class StreamWatcher:
             if is_live:
                 return True
 
-            title = info.get("title", self.url) if info else self.url
             # Countdown loop
             for remaining in range(self.poll_interval, 0, -1):
                 if self._is_cancelled:

@@ -4,10 +4,16 @@ import argparse
 import os
 import sys
 
+from . import __version__
 from .downloader import FFmpegDownloader
 from .extractor import StreamExtractor
 from .supervisor import ProcessSupervisor
-from .utils import check_system_dependencies, sanitize_filename, verify_mp4_integrity
+from .utils import (
+    check_impersonate_support,
+    check_system_dependencies,
+    sanitize_filename,
+    verify_mp4_integrity,
+)
 from .watcher import StreamWatcher
 
 
@@ -17,6 +23,7 @@ def parse_arguments(args=None) -> argparse.Namespace:
         prog="pystream-downloader",
         description="PyStream-Downloader: 基於 yt-dlp 與 FFmpeg 的智慧串流下載工具",
     )
+    parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("url", nargs="?", help="目標影片或串流網址 (URL)")
     parser.add_argument("-q", "--quality", help="指定畫質 (例如: 1080p, 720p, 480p, best)")
     parser.add_argument("-o", "--output", default="./downloads", help="指定儲存目錄 (預設: ./downloads)")
@@ -24,6 +31,16 @@ def parse_arguments(args=None) -> argparse.Namespace:
     parser.add_argument("--poll-interval", type=int, default=15, help="開播輪詢監聽間隔秒數 (預設: 15)")
     parser.add_argument("--max-retries", type=int, default=5, help="斷線最大重試次數 (預設: 5)")
     parser.add_argument("--no-pause", action="store_true", help="停用鍵盤熱鍵即時暫停功能 (適用於背景排程)")
+    parser.add_argument(
+        "--impersonate",
+        default="chrome",
+        help="啟用瀏覽器網路指紋偽裝以繞過 Cloudflare 等反爬蟲機制 (預設: chrome，可設為 none 停用，或指定 firefox, safari 等)",
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        default=None,
+        help="從本機瀏覽器提取 Cookies (例如: chrome, firefox, edge, safari, brave, opera)",
+    )
     return parser.parse_args(args)
 
 
@@ -68,12 +85,31 @@ def run_app():
             print("未提供網址，程式結束。")
             sys.exit(1)
 
+    # 判斷 impersonate 設定與系統支援狀態
+    impersonate_target = None
+    if args.impersonate and args.impersonate.lower() not in ("none", "false", "off"):
+        impersonate_target = args.impersonate
+        if not check_impersonate_support():
+            print(
+                "[WARN] 未檢測到 curl_cffi 套件或不支援 Impersonate，將嘗試標準模式連線。"
+                "若遇 Cloudflare 403 請執行: pip install curl_cffi"
+            )
+
     print(f"\n[INFO] 正在分析串流: {args.url}")
+    if impersonate_target:
+        print(f"[INFO] 已啟用瀏覽器指紋偽裝模式: {impersonate_target}")
+    if args.cookies_from_browser:
+        print(f"[INFO] 已啟用瀏覽器 Cookies 提取: {args.cookies_from_browser}")
 
     # 1. 檢查開播狀態 (若指定 --wait 或直播可能未開始)
     if args.wait:
         print(f"[INFO] 啟用開播監聽模式 (輪詢間隔: {args.poll_interval}s)...")
-        watcher = StreamWatcher(args.url, poll_interval=args.poll_interval)
+        watcher = StreamWatcher(
+            args.url,
+            poll_interval=args.poll_interval,
+            impersonate=impersonate_target,
+            cookies_from_browser=args.cookies_from_browser,
+        )
 
         def on_tick(rem, attempt):
             print(f"\r[WAIT] 串流尚未開始 (第 {attempt} 次檢測)，倒數 {rem} 秒後重試...", end="", flush=True)
@@ -86,7 +122,11 @@ def run_app():
         print("[SUCCESS] 串流已正式開播！啟動下載準備...")
 
     # 2. 提取規格與畫質
-    extractor = StreamExtractor(args.url)
+    extractor = StreamExtractor(
+        args.url,
+        impersonate=impersonate_target,
+        cookies_from_browser=args.cookies_from_browser,
+    )
     try:
         title = extractor.get_title()
         formats = extractor.get_available_formats()
@@ -107,7 +147,7 @@ def run_app():
     else:
         selected_format_id = interactive_select_quality(formats)
 
-    stream_url, quality_label = extractor.resolve_stream_url(selected_format_id)
+    stream_url, quality_label, headers = extractor.resolve_stream_details(selected_format_id)
     print(f"[INFO] 已選定畫質: {quality_label}")
 
     # 4. 準備輸出路徑
@@ -116,8 +156,12 @@ def run_app():
     output_path = os.path.join(args.output, out_filename)
     print(f"[INFO] 目標儲存路徑: {output_path}")
 
-    # 5. 啟動守護進程下載
-    downloader = FFmpegDownloader(stream_url=stream_url, output_path=output_path)
+    # 5. 啟動守護進程下載 (攜帶 HTTP Headers 避免分片取片遭遇 403)
+    downloader = FFmpegDownloader(
+        stream_url=stream_url,
+        output_path=output_path,
+        headers=headers,
+    )
     supervisor = ProcessSupervisor(downloader=downloader, max_retries=args.max_retries)
 
     def on_progress(p):

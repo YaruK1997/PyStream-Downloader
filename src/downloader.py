@@ -10,21 +10,45 @@ from typing import Optional
 class FFmpegDownloader:
     """Encapsulates FFmpeg process execution, parameter assembling, and progress parsing."""
 
-    def __init__(self, stream_url: str, output_path: str):
+    def __init__(
+        self,
+        stream_url: str,
+        output_path: str,
+        headers: Optional[dict[str, str]] = None,
+    ):
         if not stream_url or stream_url.startswith("-"):
             raise ValueError("無效或不合法的串流網址格式 (禁止空值或以破折號開頭之參數注入)。")
         self.stream_url = stream_url
         self.output_path = output_path
+        self.headers = self._validate_and_sanitize_headers(headers)
         self._progress_regex = re.compile(
             r"size=\s*(\d+[kMG]?B).*?time=\s*([\d:\.]+).*?bitrate=\s*([\d\.]+kbits/s).*?speed=\s*([\d\.]+x)"
         )
+
+    def _validate_and_sanitize_headers(
+        self, headers: Optional[dict[str, str]]
+    ) -> Optional[dict[str, str]]:
+        """Validate HTTP headers to prevent CRLF injection attacks."""
+        if not headers:
+            return None
+
+        clean_headers: dict[str, str] = {}
+        for k, v in headers.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                continue
+            # Disallow carriage return and newline characters to prevent CRLF injection
+            if "\r" in k or "\n" in k or "\r" in v or "\n" in v:
+                raise ValueError("偵測到不合法的 HTTP 標頭字元 (禁止包含換行符號 CRLF)。")
+            clean_headers[k.strip()] = v.strip()
+
+        return clean_headers if clean_headers else None
 
     def is_ffmpeg_available(self) -> bool:
         """Check if FFmpeg binary is found on system PATH."""
         return shutil.which("ffmpeg") is not None
 
     def build_command(self) -> list[str]:
-        """Assemble the FFmpeg command line with reconnect and stream copy parameters."""
+        """Assemble the FFmpeg command line with reconnect, headers, and stream copy parameters."""
         cmd = [
             "ffmpeg",
             "-y",  # Overwrite output
@@ -33,12 +57,20 @@ class FFmpegDownloader:
             "-reconnect_at_eof", "1",
             "-reconnect_streamed", "1",
             "-reconnect_delay_max", "10",
+        ]
+
+        # Attach HTTP headers (e.g. User-Agent, Referer, Cookies) before input flag
+        if self.headers:
+            headers_payload = "".join(f"{k}: {v}\r\n" for k, v in self.headers.items())
+            cmd.extend(["-headers", headers_payload])
+
+        cmd.extend([
             "-i", self.stream_url,
             "-c", "copy",  # Direct stream copy (no re-encoding)
             "-bsf:a", "aac_adtstoasc",  # Fix AAC bitstream filter for MP4 container
             "-movflags", "+faststart",
             self.output_path,
-        ]
+        ])
         return cmd
 
     def start_process(self) -> subprocess.Popen:
