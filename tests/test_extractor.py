@@ -90,7 +90,8 @@ class TestExtractor(unittest.TestCase):
         self.assertNotIn("impersonate", opts)
         self.assertNotIn("extractor_args", opts)
 
-    def test_unsupported_url_triggers_sniffer_auto_fallback(self):
+    @patch("src.static_sniffer.StaticPackerSniffer.sniff", return_value=None)
+    def test_unsupported_url_triggers_sniffer_auto_fallback(self, mock_static_sniff):
         extractor = StreamExtractor("https://missav.ai/gvh-852", sniff_mode="auto")
         mock_sniff_result = SniffResult(
             stream_url="https://surrit.com/media/playlist.m3u8",
@@ -114,7 +115,8 @@ class TestExtractor(unittest.TestCase):
             with self.assertRaises(Exception):
                 extractor.extract_metadata()
 
-    def test_unsupported_url_raises_needs_full_sniffer_when_unavailable(self):
+    @patch("src.static_sniffer.StaticPackerSniffer.sniff", return_value=None)
+    def test_unsupported_url_raises_needs_full_sniffer_when_unavailable(self, mock_static_sniff):
         from src.extractor import NeedsFullSnifferError
         extractor = StreamExtractor("https://missav.ai/gvh-852", sniff_mode="auto")
         with patch("src.sniffer.HeadlessStreamSniffer.is_available", return_value=False):
@@ -209,6 +211,44 @@ class TestExtractor(unittest.TestCase):
         details = extractor.resolve_stream_details()
         self.assertTrue(details.is_muxed)
         self.assertIsNone(details.audio_url)
+
+    @patch("src.static_sniffer.StaticPackerSniffer.sniff")
+    @patch("src.sniffer.HeadlessStreamSniffer.sniff")
+    def test_extractor_static_packer_sniffer_tier2(self, mock_headless, mock_static):
+        """Verify Tier 2 static sniffer runs and prevents unnecessary headless browser startup."""
+        from src.sniffer import SniffResult
+        mock_static.return_value = SniffResult(
+            stream_url="https://surrit.com/packed/playlist.m3u8",
+            headers={"Referer": "https://packed.com"},
+            title="Static Packed Video",
+            detected_streams=["https://surrit.com/packed/playlist.m3u8"],
+        )
+        extractor = StreamExtractor("https://packed.com/video")
+        info = extractor._run_sniffer()
+        self.assertEqual(info["url"], "https://surrit.com/packed/playlist.m3u8")
+        self.assertEqual(info["title"], "Static Packed Video")
+        mock_static.assert_called_once()
+        mock_headless.assert_not_called()
+
+    @patch("src.static_sniffer.StaticPackerSniffer.sniff")
+    @patch("src.sniffer.HeadlessStreamSniffer.sniff")
+    @patch("src.sniffer.HeadlessStreamSniffer.is_available")
+    def test_extractor_tier2_to_tier3_fallback(self, mock_is_avail, mock_headless, mock_static):
+        """Verify fallback from Tier 2 (Static) to Tier 3 (Headless) when static returns None."""
+        from src.sniffer import SniffResult
+        mock_static.return_value = None
+        mock_is_avail.return_value = True
+        mock_headless.return_value = SniffResult(
+            stream_url="https://headless.com/playlist.m3u8",
+            headers={"User-Agent": "Browser"},
+            title="Dynamic Video",
+            detected_streams=["https://headless.com/playlist.m3u8"],
+        )
+        extractor = StreamExtractor("https://dynamic.com/video")
+        info = extractor._run_sniffer()
+        self.assertEqual(info["url"], "https://headless.com/playlist.m3u8")
+        mock_static.assert_called_once()
+        mock_headless.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -126,7 +126,7 @@
   - 容器內以非 root 使用者 `appuser (UID 1000)` 運行，無特權權限（`privileged: false`），無法透過 IPC 窺探或篡改宿主機其他 UID 的進程記憶體，符合最小權限原則。
   - 配置 `shm_size: '2gb'` 避免 `/dev/shm`（預設 64MB）耗盡崩潰，保障長時間運算穩定性。
 
-### 3.11 Exit Code 42 協定與非受信資訊流審查 (Process Exit Signaling & CWE-209)
+### 3.11 Exit Code 42 協定與非受信資訊流審查 (Process Exit Signaling - CWE-209)
 - **檢驗對象**：`src/extractor.py` 之 `EXIT_CODE_NEED_FULL_SNIFFER = 42` 與 `src/cli.py`。
 - **檢查重點**：退出代碼與進程終止流程是否洩漏敏感資訊或遭受命令注入。
 - **審核結果**：**通過 (PASSED)**
@@ -134,18 +134,33 @@
   - 外部調度腳本（`deploy.ps1` / `deploy.sh`）以嚴格整數比對判斷升級，不使用 `eval` 或動態程式碼執行，徹底杜絕注入風險。
 
 ### 3.12 雙輸入音訊 URL 與標頭參數安全審查 (Dual Input URL & Header Sanitization - CWE-78 / CWE-88)
-- **檢驗對象**：src/downloader.py 之 FFmpegDownloader.__init__ 與 uild_command。
-- **檢查重點**：傳入之獨立音訊 URL（udio_url）及專屬請求標頭（udio_headers）是否可能被利用於命令列引數注入或 CRLF 標頭走私。
+- **檢驗對象**：`src/downloader.py` 之 `FFmpegDownloader.__init__` 與 `build_command`。
+- **檢查重點**：傳入之獨立音訊 URL（`audio_url`）及專屬請求標頭（`audio_headers`）是否可能被利用於命令列引數注入或 CRLF 標頭走私。
 - **審核結果**：**通過 (PASSED)**
-  - 對 udio_url 實施與視訊 URL 相同的邊界安全校驗：嚴格禁止以破折號 - 開頭，阻斷任何將 URL 偽裝為 FFmpeg 參數選項之途徑。
-  - 對 udio_headers 同步執行 _validate_and_sanitize_headers 字元校驗，若包含 \r 或 \n 立即引發 ValueError，杜絕標頭注入漏洞。
+  - 對 `audio_url` 實施與視訊 URL 相同的邊界安全校驗：嚴格禁止以破折號 `-` 開頭，阻斷任何將 URL 偽裝為 FFmpeg 參數選項之途徑。
+  - 對 `audio_headers` 同步執行 `_validate_and_sanitize_headers` 字元校驗，若包含 `\r` 或 `\n` 立即引發 `ValueError`，杜絕標頭注入漏洞。
 
 ### 3.13 雙串流網路連線與記憶體交錯防禦 (Network & Interleaving Buffer Defense - CWE-400)
-- **檢驗對象**：FFmpegDownloader.build_command 雙輸入混流設定。
+- **檢驗對象**：`FFmpegDownloader.build_command` 雙輸入混流設定。
 - **檢查重點**：同時下載雙路 HTTP/HTTPS 串流時，封包到達延遲是否導致進程記憶體無限制膨脹或溢位。
 - **審核結果**：**通過 (PASSED)**
-  - 配置 -max_interleave_delta 0，解除固定長度緩衝佇列之強制超時截斷，由 FFmpeg 根據音畫時間戳動態平滑交錯，杜絕封包丟棄與非預期記憶體膨脹。
-  - 配置 -shortest 確保任一串流到達結尾時即刻終止寫入，防範無效音軌導致的無限循環掛起。
+  - 配置 `-max_interleave_delta 0`，解除固定長度緩衝佇列之強制超時截斷，由 FFmpeg 根據音畫時間戳動態平滑交錯，杜絕封包丟棄與非預期記憶體膨脹。
+  - 配置 `-shortest` 確保任一串流到達結尾時即刻終止寫入，防範無效音軌導致的無限循環掛起。
+
+### 3.14 瀏覽器語系標籤清洗與 CDP 協定防禦 (Locale Sanitization & CDP Protocol Defense - CWE-20)
+- **檢驗對象**：`src/sniffer.py` 之 `sanitize_locale` 與 `context.new_page()` 錯誤處理。
+- **檢查重點**：外部或內部輸入之語系字串是否可能導致 Chrome DevTools Protocol 崩潰或非法字元逃逸。
+- **審核結果**：**通過 (PASSED)**
+  - `sanitize_locale` 限制僅保留第一個標準標籤並以正則 `[^a-zA-Z0-9_\-]` 清理非法字元，確保完全符合 BCP-47 標準。
+  - 建立 CDP 異常回退機制，若瀏覽器引擎因特定語系產生協定層衝突，自動移除 `locale` 重新建立上下文，保障主流程永不崩潰。
+
+### 3.15 靜態混淆解包演算法安全與 ReDoS 防禦審核 (Algorithm ReDoS & Sandbox Safety - CWE-1333 / CWE-400 - v1.5.0 新增)
+- **檢驗對象**：`src/packer.py` 與 `src/static_sniffer.py`。
+- **檢查重點**：是否使用不安全之動態執行（`eval`/`exec`）、解包正則是否存在災難性回溯（ReDoS）風險、TLS 偽裝與標頭安全性。
+- **審核結果**：**通過 (PASSED)**
+  - **零動態執行 (No Eval/Exec)**：`unpack_dean_edwards` 全程採用純數學基數轉換（Radix Base 10~62）與字典對應（Token Dictionary Mapping），不調用 Python `eval()` 或 JS runtime，杜絕惡意代碼注入風險。
+  - **ReDoS 災難性回溯防禦**：模板提取採用邊界限定模式，取代邏輯採用 O(N) 單趟正則回呼 `re.sub(r'\b(\w+)\b', ...)`，無任何巢狀貪婪量詞，徹底阻絕正規表達式資源耗盡攻擊。
+  - **TLS 指紋與標頭隔離**：`curl_cffi` 僅於傳輸層模擬 Chrome 握手指紋，Referer 與 Origin 嚴格基於目標 URL 規格化解析（`urlparse`），無任何機敏本機資料洩漏。
 
 ---
 
@@ -155,4 +170,6 @@
 - [x] **機敏資訊稽核**：無硬編碼 Token 或密鑰（0 Secrets）。
 - [x] **相依套件審核**：相依組態乾淨無高危 CVE（0 Supply Chain Risks）。
 - [x] **多階段容器安全**：非 root 身分、雙層攻擊面隔離、IPC 安全審查通過。
+- [x] **CDP 與外部協定防禦**：語系標籤清洗與 Protocol Error 容錯降級就緒。
+- [x] **演算法與靜態解包安全**：零動態代碼執行、ReDoS O(N) 複雜度控制與 TLS 隔離驗證通過。
 - [x] **閘門放行**：階段 4 資安審查核可通過，同意推進至 **階段 5：容器化及部署 (Gemini 3.8 Flash)**。

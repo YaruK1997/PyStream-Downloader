@@ -62,12 +62,25 @@
 | **TC-CL-05** | `tests/test_cli.py` | CLI 捕獲 `NeedsFullSnifferError` 與進程退出代碼轉換 | 驗證主程序精準以 `sys.exit(42)` 終止，供外部編排器或 Shell 腳本自動升級。 |
 | **TC-UT-04** | `tests/test_utils.py` | 系統依賴檢測加入 `check_playwright_support()` | 正確檢驗 Playwright 庫與本機 Chromium 二進位執行檔可用性。 |
 | **TC-SC-12** | `tests/test_stage2_self_check.py` | 階段 2 冒煙自檢：驗證 Exit Code 42 自適應升級協定與異常封裝 | 驗證 `NeedsFullSnifferError` 屬性、例外回溯與主調度器狀態碼對齊。 |
-| **TC-EX-07** | 	ests/test_extractor.py | 視訊軌無音訊 (codec == \'none\') 時自動探測最佳 AAC 音軌並封裝 StreamDetails | 驗證 StreamDetails 具備視訊/音訊雙直鏈與專屬標頭，向下相容 3-Tuple 解構。 |
-| **TC-EX-08** | 	ests/test_extractor.py | 原生內嵌音軌之串流不額外掛載獨立音訊 (is_muxed = True) | 驗證 udio_url 為 None，杜絕重複疊加音軌。 |
-| **TC-DL-04** | 	ests/test_downloader.py | FFmpeg 雙輸入命令組裝、-map 0:v:0 -map 1:a:0 映射與 A/V 時間戳同步參數 | 驗證兩組 -i 輸入、-fflags +genpts、-avoid_negative_ts make_zero、-max_interleave_delta 0 與 -shortest。 |
-| **TC-DL-05** | 	ests/test_downloader.py | 非 AAC 音訊（如 Opus）輸出至 MP4 時自適應轉碼 AAC 與重採樣同步 | 驗證輸出為 MP4 且音訊非 AAC 時自動轉換為 -c:a aac -b:a 192k -af aresample=async=1:first_pts=0。 |
-| **TC-DL-06** | 	ests/test_downloader.py | 音訊 URL 參數注入防禦（CWE-88） | 傳入以破折號開頭之 udio_url 立即引發 ValueError。 |
-| **TC-SC-13** | 	ests/test_stage2_self_check.py | 階段 2 冒煙自檢：驗證音軌探測、StreamDetails 與雙輸入混流 A/V 同步全鏈路整合 | 驗證格式探測至 FFmpeg 命令組裝之完整流水線一致性。 |
+| **TC-EX-07** | `tests/test_extractor.py` | 視訊軌無音訊 (`acodec == 'none'`) 時自動探測最佳 AAC 音軌並封裝 StreamDetails | 驗證 StreamDetails 具備視訊/音訊雙直鏈與專屬標頭，向下相容 3-Tuple 解構。 |
+| **TC-EX-08** | `tests/test_extractor.py` | 原生內嵌音軌之串流不額外掛載獨立音訊 (`is_muxed = True`) | 驗證 `audio_url` 為 None，杜絕重複疊加音軌。 |
+| **TC-DL-04** | `tests/test_downloader.py` | FFmpeg 雙輸入命令組裝、`-map 0:v:0 -map 1:a:0` 映射與 A/V 時間戳同步參數 | 驗證兩組 `-i` 輸入、`-fflags +genpts`、`-avoid_negative_ts make_zero`、`-max_interleave_delta 0` 與 `-shortest`。 |
+| **TC-DL-05** | `tests/test_downloader.py` | 非 AAC 音訊（如 Opus）輸出至 MP4 時自適應轉碼 AAC 與重採樣同步 | 驗證輸出為 MP4 且音訊非 AAC 時自動轉換為 `-c:a aac -b:a 192k -af aresample=async=1:first_pts=0`。 |
+| **TC-DL-06** | `tests/test_downloader.py` | 音訊 URL 參數注入防禦（CWE-88） | 傳入以破折號開頭之 `audio_url` 立即引發 `ValueError`。 |
+| **TC-SC-13** | `tests/test_stage2_self_check.py` | 階段 2 冒煙自檢：驗證音軌探測、StreamDetails 與雙輸入混流 A/V 同步全鏈路整合 | 驗證格式探測至 FFmpeg 命令組裝之完整流水線一致性。 |
+| **TC-SN-03** | `tests/test_sniffer.py` | Playwright `locale` BCP-47 標準語系設定與 `Accept-Language` 分離 | 驗證 context 參數中 `locale` 為純單一語言標籤（如 `"zh-TW"`），多語系權重清單由 `extra_http_headers` 承載。 |
+| **TC-SN-04** | `tests/test_sniffer.py` | CDP `Emulation.setLocaleOverride` 協定異常自動防禦降級 | 模擬 `new_page()` 拋出 Invalid locale name 時，自動移除 `locale` 參數並安全重試成功。 |
+| **TC-PK-01** | `tests/test_packer.py` | Dean Edwards Packer Base 36 演算法還原 | 驗證標準 0-9a-z 進制符號解析與字典還原無誤。 |
+| **TC-PK-02** | `tests/test_packer.py` | Dean Edwards Packer Base 62 演算法還原 | 驗證大寫字母進制 (0-9a-zA-Z) 符號解析與多節點串流直鏈重構。 |
+| **TC-PK-03** | `tests/test_packer.py` | 畸形、空字串或非打包 JS 代碼邊界防護 | 驗證異常輸入安全回傳空字串，杜絕正則崩潰或例外逃逸。 |
+| **TC-PK-04** | `tests/test_packer.py` | 網頁多個 Packed 區塊批次提取與過濾 | 驗證 `find_packed_scripts` 正確識別多段混淆代碼。 |
+| **TC-PK-05** | `tests/test_packer.py` | 靜態 HTML 全文端到端解包與 m3u8 優先級排序 | 驗證主清單 (playlist.m3u8) 與多解析度切片排序回傳。 |
+| **TC-SS-01** | `tests/test_static_sniffer.py` | `StaticPackerSniffer` 混淆 HTML 探測與標頭綁定 | 驗證靜態嗅探抽取真實串流直鏈、OG Title 與 Origin/Referer 防盜鏈標頭。 |
+| **TC-SS-02** | `tests/test_static_sniffer.py` | 無串流網頁安全回退 | 驗證未包含視訊或混淆之網頁優雅返回 None。 |
+| **TC-SS-03** | `tests/test_static_sniffer.py` | 網路連線中斷或抓取異常安全處置 | 驗證請求例外時安全回傳 None，確保調度鏈路不中斷。 |
+| **TC-SN-05** | `tests/test_sniffer.py` | 無頭瀏覽器 Stealth 腳本注入與延遲加載播放器激活 | 驗證注入 webdriver 遮蔽腳本與調用 `video.play()` / 點擊激活。 |
+| **TC-EX-09** | `tests/test_extractor.py` | Tier 2 靜態解包優先命中驗證 | 驗證 Tier 2 成功提取時，直接回傳結果且不調用 Tier 3 無頭瀏覽器。 |
+| **TC-EX-10** | `tests/test_extractor.py` | Tier 2 至 Tier 3 平滑降級驗證 | 驗證 Tier 2 無果時自動平滑切入 Tier 3 無頭動態嗅探。 |
 
 ---
 

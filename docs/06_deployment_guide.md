@@ -87,7 +87,11 @@ docker-compose run --rm downloader "https://www.youtube.com/watch?v=xxxx"
 docker-compose run --rm -d downloader "https://www.youtube.com/watch?v=xxxx" --wait -q best
 ```
 
-### 2. 全功能嗅探下載 (適用 MissAV 等動態 JS 混淆站點)
+### 2. 靜態混淆與動態嗅探分流 (v1.5.0 優化)
+> [!TIP]
+> 在 v1.5.0 中，`downloader` 輕量服務已內建 `StaticPackerSniffer`（基於 `curl_cffi`）。針對 MissAV 等前端採用 Dean Edwards Packer 混淆的站點，**輕量容器即可在 0.5 秒內靜態還原並下載**，無需升級至 `full` 容器！唯有遇到無靜態特徵且必須由 Chromium 渲染的複雜動態站點時，才會自動升級至 `downloader-full`。
+
+### 3. 全功能無頭瀏覽器嗅探 (適用需 Chromium 渲染之複雜動態站點)
 ```bash
 # 啟動含 Playwright Chromium 的全功能容器 (~1.4GB)
 docker-compose --profile full run --rm downloader-full "https://missav.ai/gvh-852"
@@ -101,6 +105,7 @@ docker-compose --profile full run --rm downloader-full "https://missav.ai/gvh-85
 | **映像檔預估大小** | ~420 MB | ~1.4 GB |
 | **啟動開銷** | 瞬時 (< 1 秒) | 較重 (~2-3 秒) |
 | **Playwright/Chromium**| ❌ 無 | ✔️ 內建 Chromium + 依賴 |
+| **JS Packer 靜態解包** | ✔️ 支援 (v1.5.0 內建，MissAV 直接可用) | ✔️ 支援 |
 | **記憶體/IPC 設置** | 預設標準 | `shm_size: 2gb`, `ipc: host` |
 | **預設啟動** | ✔️ 是 (`docker-compose run`) | 需 `--profile full` 啟用 |
 
@@ -162,6 +167,7 @@ docker inspect --format='{{json .State.Health}}' pystream-downloader-slim
 | **容器內無法暫停串流** | 未附加 TTY / 終端 | 啟動時必須加上 `-it`（Compose 請確保配置 `stdin_open: true` 與 `tty: true`）。 |
 | **音軌缺失或影片無聲音** | 目標網站為 DASH 分離架構（如 YouTube 1080p+），音視訊為獨立串流 | v1.4.0 系統已全面內建獨立音軌探測與雙輸入混流，會自動匹配最佳音軌進行封裝。 |
 | **音畫不同步 (A/V Desync)** | 網路延遲抖動、時間戳偏移或非 AAC 音訊與 MP4 不相容 | v1.4.0 配置 -avoid_negative_ts make_zero -max_interleave_delta 0 消除時間戳偏差；Opus 音訊入 MP4 自動啟用 -af aresample=async=1:first_pts=0 重採樣同步。 |
+| **嗅探器 Protocol error (Invalid locale name)** | Chromium CDP 語系協定不支援 HTTP Accept-Language 複合格式 | v1.4.1 已修正 locale 僅使用標準 BCP-47 單一語言標籤（zh-TW），並增加 CDP 協定層容錯降級。 |
 
 ---
 

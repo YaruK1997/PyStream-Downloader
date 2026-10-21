@@ -131,6 +131,7 @@
   2. **網路層即時監聽 (Request Interception)**：監聽瀏覽器核心之所有網路請求（`page.on("request")`），精準攔截 `.m3u8`、`.mpd` 等影音串流清單網址與即時請求標頭（User-Agent, Referer, Cookies）。
   3. **無縫串接下載管線**：嗅探成功後自動擷取 Master Playlist，交由 `StreamExtractor` 與 `FFmpegDownloader` 進行解析度過濾與斷線守護下載。
   4. **優雅降級保護**：若環境未安裝 `playwright` 或瀏覽器核心，提供友善之安裝提示（`playwright install chromium`），不阻斷一般標準解析流程。
+  5. **CDP 瀏覽器語系模擬與防禦降級 (v1.4.1 修訂)**：Playwright `locale` 採嚴格單一 BCP 47 語言標籤（如 `"zh-TW"`），避免 Chromium DevTools Protocol (CDP) `Emulation.setLocaleOverride` 拋出 `Invalid locale name` 錯誤；多語系權重清單轉置至 `extra_http_headers` 之 `Accept-Language`，並配置 CDP 語系異常自動降級回退機制。
 
 ### F8. 雙軌容器自適應晉升架構與 Exit Code 42 協議 (Dual-Tier Auto-Escalation Protocol - v1.3.0 新增)
 - **目標場景**：兼顧容器極致輕量化（420MB）與動態嗅探通用性（通殺前端 JS 混淆），且使用者「完全無感、無需手動切換參數」。
@@ -160,6 +161,19 @@ esolve_stream_details() 封裝 StreamDetails 同步回傳視訊與音訊之 CDN 
      - 視訊保持無損複製：-c:v copy。
      - 音訊相容性自適應：若音軌為 AAC 則原生串流複製 (-c:a copy -bsf:a aac_adtstoasc)；若為 Opus/Vorbis 且輸出至 MP4，則自動啟動輕量轉碼 (-c:a aac -b:a 192k) 並啟用音訊重採樣同步 (-af aresample=async=1:first_pts=0)。
      - 時間戳平移與交錯佇列保護：配置 -fflags +genpts -avoid_negative_ts make_zero -max_interleave_delta 0 -shortest，徹底消除起始 PTS 偏差、封包交錯佇列溢位與結尾畫面凍結問題。
+
+### F10. 靜態混淆解包嗅探器 (Static Packer Sniffer / Dean Edwards Unpacker - v1.5.0 新增)
+- **目標場景**：MissAV 等影音網站採用 Dean Edwards Packer (`eval(function(p,a,c,k,e,d)...)`) 在前端混淆真正的 CDN 串流直鏈 (`https://surrit.com/[UUID]/playlist.m3u8`)，且前端常掛載 Cloudflare Turnstile 人機驗證，傳統無頭瀏覽器易遭阻擋。
+- **核心實作**：
+  1. **純演算法靜態解包**：在 `src/packer.py` 實作任意進制（Base 10 至 Base 62）符號映射與單趟代碼重構，於 0.01 秒內靜態還原真實串流清單與畫質節點。
+  2. **TLS 指紋穿透抓取**：在 `src/static_sniffer.py` 結合 `curl_cffi` 偽裝 Chrome 120 網路指紋，繞過 Cloudflare WAF，自動萃取 OG Title / Title Tag，並綁定原站 `Referer` 與 `Origin` 防盜鏈標頭。
+  3. **極致輕量**：在輕量環境或 Docker 輕量鏡像中無需安裝 Playwright / Chromium 即可完整解析此類網站。
+
+### F11. 增強型無頭動態嗅探與播放器激活 (Enhanced Dynamic Sniffer & Auto-Play - v1.5.0 新增)
+- **目標場景**：針對未混淆但具備延遲加載 (`preload="none"`)、需手動點擊 Play、或具備反自動化檢測特徵之動態網站。
+- **核心實作**：
+  1. **Stealth 反檢測特徵遮蔽**：頁面啟動時自動注入 `Object.defineProperty(navigator, 'webdriver', {get: () => undefined})`，降低自動化特徵。
+  2. **延遲播放器自動激活**：頁面加載後自動調用 `video.play()` 並點擊常見播放控制項（如 `.plyr__control--overlaid`、`.player`、`video`），強制激活 Hls.js 發送串流請求。
 ---
 
 ## 3. CLI 介面與參數設計 (Command Line Interface)
@@ -188,7 +202,9 @@ esolve_stream_details() 封裝 StreamDetails 同步回傳視訊與音訊之 CDN 
 
 | 模組檔案 | 核心類別 / 函數 | 職責定義 |
 | :--- | :--- | :--- |
-| `src/sniffer.py` | `HeadlessStreamSniffer` | 基於 Playwright 攔截動態網頁請求，嗅探 `.m3u8` / `.mpd` 串流直鏈與標頭。 |
+| `src/packer.py` | 純演算法解包模組 | Dean Edwards Packer 解包、Base 10~62 符號解析與 m3u8 串流提取。 |
+| `src/static_sniffer.py` | `StaticPackerSniffer` | 結合 `curl_cffi` TLS 指紋穿透與靜態解包，免疫 Cloudflare Turnstile。 |
+| `src/sniffer.py` | `HeadlessStreamSniffer` | 基於 Playwright 攔截動態網頁請求，具備 Stealth 特徵遮蔽與播放器點擊激活。 |
 | `src/watcher.py` | `StreamWatcher` | 負責探測串流狀態 (`is_live`)，支援 Impersonate 與 Cookies 輪詢防 403。 |
 | `src/extractor.py` | `StreamExtractor` | 包裝 `yt-dlp`，支援瀏覽器指紋偽裝，整合 Sniffer 自動回退、畫質解析與標頭抽取。 |
 | `src/downloader.py` | `FFmpegDownloader` | 封裝 FFmpeg 進程、注入安全 HTTP Headers、進程隔離與進度回報。 |
@@ -202,7 +218,9 @@ esolve_stream_details() 封裝 StreamDetails 同步回傳視訊與音訊之 CDN 
 
 | 異常情境 (Edge Case) | 系統預期防禦行為 |
 | :--- | :--- |
-| **目標網站為 yt-dlp 不支援 (Unsupported URL) 或前端 JS 混淆** | 自動調用 `HeadlessStreamSniffer` (Playwright) 動態嗅探 `.m3u8` / `.mpd` 串流直鏈與 Headers。 |
+| **目標網站為 yt-dlp 不支援且包含 JS Packer 混淆** | 優先觸發 Tier 2 `StaticPackerSniffer` 演算法解包，0.5s 內取得直鏈，避開 Cloudflare。 |
+| **目標網站具備延遲加載 (`preload="none"`) 播放器** | Tier 3 動態嗅探器自動調用 `video.play()` 與模擬點擊激活 Hls.js 串流請求。 |
+| **目標網站為 yt-dlp 不支援且非靜態混淆** | 自動調用 `HeadlessStreamSniffer` (Playwright) 增強型動態嗅探 `.m3u8` / `.mpd` 串流直鏈與 Headers。 |
 | **環境未安裝 Playwright 或 Chromium 瀏覽器** | 若在輕量容器中則觸發 Exit Code 42 自動升級至 full 容器；本機環境則提供友善安裝指引。 |
 | **目標網站觸發 Cloudflare 403** | 預設啟用 `impersonate=chrome` 與 `curl_cffi` 模擬瀏覽器 TLS 指紋；未安裝時主動警告引導安裝。 |
 | **HTTP 標頭存在 CRLF 注入嘗試** | `FFmpegDownloader` 檢驗標頭鍵值，發現 `\r` 或 `\n` 立即引發 `ValueError` 阻斷。 |

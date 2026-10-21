@@ -2,7 +2,19 @@
 
 from dataclasses import dataclass, field
 import os
+import re
 from typing import Callable, Optional
+
+
+def sanitize_locale(raw_locale: Optional[str]) -> str:
+    """Extract single valid BCP-47 locale name, defaulting to zh-TW."""
+    if not raw_locale:
+        return "zh-TW"
+    # Take the first tag before commas or semicolons (e.g. zh-TW,zh;q=0.9 -> zh-TW)
+    tag = raw_locale.split(",")[0].split(";")[0].strip()
+    # Verify characters are standard language-country format (e.g. zh-TW, en-US)
+    clean_tag = re.sub(r"[^a-zA-Z0-9_\-]", "", tag)
+    return clean_tag if clean_tag else "zh-TW"
 
 
 @dataclass
@@ -64,15 +76,39 @@ class HeadlessStreamSniffer:
             ]
             browser = p.chromium.launch(headless=self.headless, args=launch_args)
 
+            clean_locale = sanitize_locale("zh-TW")
             context_kwargs = {
                 "viewport": {"width": 1280, "height": 720},
-                "locale": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                "locale": clean_locale,
+                "extra_http_headers": {
+                    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                },
             }
             if user_agent:
                 context_kwargs["user_agent"] = user_agent
 
-            context = browser.new_context(**context_kwargs)
-            page = context.new_page()
+            try:
+                context = browser.new_context(**context_kwargs)
+                page = context.new_page()
+            except Exception as e:
+                # Defensive fallback: If CDP Emulation.setLocaleOverride fails, remove locale and retry
+                err_str = str(e).lower()
+                if "setlocaleoverride" in err_str or "locale" in err_str:
+                    context_kwargs.pop("locale", None)
+                    context = browser.new_context(**context_kwargs)
+                    page = context.new_page()
+                else:
+                    raise
+
+            # Stealth: mask automated browser fingerprints
+            try:
+                page.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+                """)
+            except Exception:
+                pass
 
             def on_request(request):
                 req_url = request.url
@@ -96,6 +132,31 @@ class HeadlessStreamSniffer:
                 # Navigate to the page
                 page.goto(url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
                 captured_title = page.title() or "untitled_stream"
+
+                # Trigger video playback / user click for lazy-loaded players (e.g. preload="none")
+                try:
+                    page.evaluate("""
+                        () => {
+                            document.querySelectorAll('video').forEach(v => {
+                                v.muted = true;
+                                v.play().catch(() => {});
+                            });
+                        }
+                    """)
+                    for selector in (
+                        "button.plyr__control--overlaid",
+                        ".plyr__video-wrapper",
+                        ".player",
+                        "video",
+                        "[aria-label*='Play' i]",
+                        "[aria-label*='播放' i]",
+                    ):
+                        elem = page.query_selector(selector)
+                        if elem and elem.is_visible():
+                            elem.click(timeout=1000)
+                            break
+                except Exception:
+                    pass
 
                 # Wait for player or stream requests (polling up to remaining timeout)
                 elapsed = 0.0
@@ -137,4 +198,3 @@ class HeadlessStreamSniffer:
             title=captured_title,
             detected_streams=detected_urls,
         )
-

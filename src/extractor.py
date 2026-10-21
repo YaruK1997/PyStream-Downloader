@@ -97,8 +97,85 @@ class StreamExtractor:
 
         return ydl_opts
 
+    def _build_info_from_sniff_result(self, res: Any) -> dict[str, Any]:
+        """Convert SniffResult to yt-dlp compatible info dict, attempting yt-dlp probing first."""
+        self._sniff_result = res
+
+        # Attempt to inspect formats from the sniffed stream URL using yt-dlp with captured headers
+        yt_dlp = self._ensure_ytdlp()
+        ydl_opts = self._build_ydl_opts()
+        if res.headers:
+            ydl_opts["http_headers"] = res.headers
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(res.stream_url, download=False)
+                if info:
+                    generic_titles = ("untitled_stream", "playlist", "master", "video", "index", "live")
+                    if res.title and (not info.get("title") or info.get("title").lower() in generic_titles):
+                        info["title"] = res.title
+                    existing_headers = info.get("http_headers", {})
+                    existing_headers.update(res.headers)
+                    info["http_headers"] = existing_headers
+                    return info
+        except Exception:
+            pass
+
+        # Build fallback formats from detected_streams
+        formats = []
+        if getattr(res, "detected_streams", None):
+            for s_url in res.detected_streams:
+                height = 1080
+                s_lower = s_url.lower()
+                if "720p" in s_lower:
+                    height = 720
+                elif "480p" in s_lower:
+                    height = 480
+                elif "360p" in s_lower:
+                    height = 360
+                elif "1080p" in s_lower:
+                    height = 1080
+                formats.append({
+                    "format_id": f"{height}p" if height != 1080 or "1080p" in s_lower else "best",
+                    "resolution": f"{height}p",
+                    "height": height,
+                    "url": s_url,
+                    "ext": "mp4",
+                    "http_headers": res.headers,
+                })
+
+        if not formats:
+            formats.append({
+                "format_id": "best",
+                "resolution": "auto",
+                "height": 1080,
+                "url": res.stream_url,
+                "ext": "mp4",
+                "http_headers": res.headers,
+            })
+
+        return {
+            "id": "sniffed_stream",
+            "title": res.title or "sniffed_stream",
+            "url": res.stream_url,
+            "http_headers": res.headers,
+            "formats": formats,
+        }
+
     def _run_sniffer(self) -> dict[str, Any]:
-        """Trigger headless browser stream sniffer for dynamic or obfuscated websites."""
+        """Trigger stream sniffer pipeline: Tier 2 (Static Packer) -> Tier 3 (Headless Playwright)."""
+        # Tier 2: Static Packer & Pattern Sniffer (Fast, lightweight, immune to Cloudflare Turnstile)
+        try:
+            from .static_sniffer import StaticPackerSniffer
+            static_sniffer = StaticPackerSniffer(timeout=min(self.sniff_timeout, 10), impersonate=self.impersonate)
+            res = static_sniffer.sniff(self.url)
+            if res and res.stream_url:
+                print(f"[SUCCESS] 成功透過靜態混淆解包嗅探到串流直鏈: {res.stream_url}")
+                return self._build_info_from_sniff_result(res)
+        except Exception:
+            pass
+
+        # Tier 3: Enhanced Dynamic Headless Browser Sniffer
         from .sniffer import HeadlessStreamSniffer
 
         sniffer = HeadlessStreamSniffer(timeout=self.sniff_timeout)
@@ -117,42 +194,8 @@ class StreamExtractor:
                 f"若目標需要登入或點擊驗證碼，建議手動從瀏覽器 (F12 -> Network -> 篩選 m3u8) 複製直鏈。"
             )
 
-        self._sniff_result = res
         print(f"[SUCCESS] 成功嗅探到動態串流直鏈: {res.stream_url}")
-
-        # Now extract formats from the sniffed stream URL using yt-dlp
-        yt_dlp = self._ensure_ytdlp()
-        ydl_opts = self._build_ydl_opts()
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(res.stream_url, download=False)
-                if info:
-                    if res.title and (not info.get("title") or info.get("title") == "untitled_stream"):
-                        info["title"] = res.title
-                    existing_headers = info.get("http_headers", {})
-                    existing_headers.update(res.headers)
-                    info["http_headers"] = existing_headers
-                    return info
-        except Exception:
-            pass
-
-        # Fallback info dict if yt-dlp cannot inspect the m3u8 further
-        return {
-            "id": "sniffed_stream",
-            "title": res.title or "sniffed_stream",
-            "url": res.stream_url,
-            "http_headers": res.headers,
-            "formats": [
-                {
-                    "format_id": "best",
-                    "resolution": "auto",
-                    "height": 1080,
-                    "url": res.stream_url,
-                    "ext": "mp4",
-                    "http_headers": res.headers,
-                }
-            ],
-        }
+        return self._build_info_from_sniff_result(res)
 
     def extract_metadata(self) -> dict[str, Any]:
         """Extract full metadata dictionary without downloading the media."""
