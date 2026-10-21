@@ -1,10 +1,45 @@
 """FFmpeg Worker and process management."""
 
+import functools
 import os
 import re
 import shutil
 import subprocess
 from typing import Optional
+
+
+@functools.lru_cache(maxsize=1)
+def get_ffmpeg_hls_options() -> list[str]:
+    """Detect available HLS demuxer options supported by the installed FFmpeg version.
+
+    In modern FFmpeg (v6.1+, v7+), HLS demuxer enforces strict extension checking by default.
+    Options:
+      - `-allowed_segment_extensions ALL`: permits non-standard or disguised chunk extensions (.jpeg, .png, .jpg).
+      - `-extension_picky 0`: ignores format/mime mismatches between probed container (mpegts) and extension (.jpeg).
+      - `-allowed_extensions ALL`: allows arbitrary playlist extensions.
+    Older FFmpeg releases (v5.x and below) do not recognize these flags and will fail if passed.
+    """
+    if not shutil.which("ffmpeg"):
+        return []
+
+    flags: list[str] = []
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-h", "demuxer=hls"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        help_text = (proc.stdout or "") + (proc.stderr or "")
+        if "allowed_segment_extensions" in help_text:
+            flags.extend(["-allowed_segment_extensions", "ALL"])
+        if "extension_picky" in help_text:
+            flags.extend(["-extension_picky", "0"])
+        if "allowed_extensions" in help_text:
+            flags.extend(["-allowed_extensions", "ALL"])
+    except Exception:
+        pass
+    return flags
 
 
 class FFmpegDownloader:
@@ -18,6 +53,7 @@ class FFmpegDownloader:
         audio_url: Optional[str] = None,
         audio_headers: Optional[dict[str, str]] = None,
         audio_codec: Optional[str] = None,
+        is_hls: Optional[bool] = None,
     ):
         if not stream_url or stream_url.startswith("-"):
             raise ValueError("無效或不合法的串流網址格式 (禁止空值或以破折號開頭之參數注入)。")
@@ -29,6 +65,7 @@ class FFmpegDownloader:
         self.audio_url = audio_url if audio_url and audio_url != stream_url else None
         self.audio_headers = self._validate_and_sanitize_headers(audio_headers)
         self.audio_codec = (audio_codec or "aac").lower()
+        self.is_hls = is_hls
         self._progress_regex = re.compile(
             r"size=\s*(\d+[kMG]?B).*?time=\s*([\d:\.]+).*?bitrate=\s*([\d\.]+kbits/s).*?speed=\s*([\d\.]+x)"
         )
@@ -55,6 +92,14 @@ class FFmpegDownloader:
         """Check if FFmpeg binary is found on system PATH."""
         return shutil.which("ffmpeg") is not None
 
+    @staticmethod
+    def is_hls_url(url: Optional[str]) -> bool:
+        """Determine whether the URL points to an HLS playlist based on filename or query."""
+        if not url:
+            return False
+        clean = url.split("?")[0].lower()
+        return clean.endswith(".m3u8") or ".m3u8" in clean or "m3u8" in url.lower()
+
     def build_command(self) -> list[str]:
         """Assemble the FFmpeg command line with reconnect, headers, multi-stream mapping, and A/V sync flags."""
         cmd = [
@@ -64,12 +109,17 @@ class FFmpegDownloader:
         ]
 
         # Input 0: Video stream (or combined muxed stream)
+        is_video_hls = self.is_hls or (self.is_hls is None and self.is_hls_url(self.stream_url))
         cmd.extend([
             "-reconnect", "1",
-            "-reconnect_at_eof", "1",
             "-reconnect_streamed", "1",
             "-reconnect_delay_max", "10",
         ])
+        if not is_video_hls:
+            cmd.extend(["-reconnect_at_eof", "1"])
+        else:
+            cmd.extend(get_ffmpeg_hls_options())
+
         if self.headers:
             headers_payload = "".join(f"{k}: {v}\r\n" for k, v in self.headers.items())
             cmd.extend(["-headers", headers_payload])
@@ -77,12 +127,17 @@ class FFmpegDownloader:
 
         # Input 1: Separate audio stream (if present)
         if self.audio_url:
+            is_audio_hls = self.is_hls or (self.is_hls is None and self.is_hls_url(self.audio_url))
             cmd.extend([
                 "-reconnect", "1",
-                "-reconnect_at_eof", "1",
                 "-reconnect_streamed", "1",
                 "-reconnect_delay_max", "10",
             ])
+            if not is_audio_hls:
+                cmd.extend(["-reconnect_at_eof", "1"])
+            else:
+                cmd.extend(get_ffmpeg_hls_options())
+
             eff_audio_headers = self.audio_headers or self.headers
             if eff_audio_headers:
                 a_headers_payload = "".join(f"{k}: {v}\r\n" for k, v in eff_audio_headers.items())

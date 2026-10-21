@@ -15,6 +15,14 @@ services:
       - ./downloads:/app/downloads
     environment:
       - PYTHONUNBUFFERED=1
+      - HTTP_PROXY
+      - HTTPS_PROXY
+      - ALL_PROXY
+      - NO_PROXY
+      - http_proxy
+      - https_proxy
+      - all_proxy
+      - no_proxy
     restart: "no"
 
   # 完整動態嗅探下載器 (適合 MissAV 等動態 JS 混淆站點，含 Playwright Chromium，體積 ~1.4GB)
@@ -34,4 +42,12 @@ services:
       - ./downloads:/app/downloads
     environment:
       - PYTHONUNBUFFERED=1
+      - HTTP_PROXY
+      - HTTPS_PROXY
+      - ALL_PROXY
+      - NO_PROXY
+      - http_proxy
+      - https_proxy
+      - all_proxy
+      - no_proxy
     restart: "no"

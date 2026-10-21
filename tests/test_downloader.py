@@ -1,7 +1,7 @@
 """Unit tests for src.downloader (TC-DL-01, TC-DL-02, TC-DL-03)."""
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.downloader import FFmpegDownloader
 
@@ -156,6 +156,52 @@ class TestDownloader(unittest.TestCase):
                 output_path="out.mp4",
                 audio_url="-i malicious",
             )
+
+    def test_is_hls_url_detection(self):
+        self.assertTrue(FFmpegDownloader.is_hls_url("https://example.com/playlist.m3u8"))
+        self.assertTrue(FFmpegDownloader.is_hls_url("https://example.com/live/master.m3u8?token=xyz"))
+        self.assertTrue(FFmpegDownloader.is_hls_url("https://example.com/stream_m3u8"))
+        self.assertFalse(FFmpegDownloader.is_hls_url("https://example.com/video.mp4"))
+        self.assertFalse(FFmpegDownloader.is_hls_url("https://example.com/audio.webm"))
+        self.assertFalse(FFmpegDownloader.is_hls_url(""))
+        self.assertFalse(FFmpegDownloader.is_hls_url(None))
+
+    def test_hls_stream_omits_reconnect_at_eof(self):
+        dl = FFmpegDownloader("https://example.com/video.m3u8", "out.mp4")
+        cmd = dl.build_command()
+        self.assertNotIn("-reconnect_at_eof", cmd)
+
+    def test_non_hls_stream_includes_reconnect_at_eof(self):
+        dl = FFmpegDownloader("https://example.com/live_stream.ts", "out.mp4")
+        cmd = dl.build_command()
+        self.assertIn("-reconnect_at_eof", cmd)
+        self.assertIn("1", cmd)
+
+    def test_get_ffmpeg_hls_options_mocked(self):
+        from src.downloader import get_ffmpeg_hls_options
+
+        mock_help = (
+            "Demuxer hls [Apple HTTP Live Streaming]:\n"
+            "  -allowed_extensions <string>\n"
+            "  -allowed_segment_extensions <string>\n"
+            "  -extension_picky <boolean>\n"
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_proc = MagicMock()
+            mock_proc.stdout = mock_help
+            mock_proc.stderr = ""
+            mock_run.return_value = mock_proc
+
+            # Clear cache for testing
+            get_ffmpeg_hls_options.cache_clear()
+            opts = get_ffmpeg_hls_options()
+
+            self.assertIn("-allowed_segment_extensions", opts)
+            self.assertIn("ALL", opts)
+            self.assertIn("-extension_picky", opts)
+            self.assertIn("0", opts)
+            self.assertIn("-allowed_extensions", opts)
+            get_ffmpeg_hls_options.cache_clear()
 
 
 if __name__ == "__main__":

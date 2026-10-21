@@ -60,19 +60,48 @@
     └── 異常降級: 捕捉 Emulation.setLocaleOverride 協定錯誤時自動移除 locale 降級重試
             │
             ▼ (遭遇議題: MissAV 遭遇 Cloudflare Turnstile 阻擋無頭瀏覽器 + preload="none" 播放器未激活)
-  [ v1.5.0 (2026-10-22) Nero 流程專案重構：三層式串流解析管線與靜態混淆解包引擎 ] ─── (當前版本)
+  [ v1.5.0 (2026-10-22) Nero 流程專案重構：三層式串流解析管線與靜態混淆解包引擎 ]
     ├── 靜態解包: 新增 src/packer.py，演算法還原 Dean Edwards Packer (Base 10~62)
     ├── 零開銷穿透: 新增 src/static_sniffer.py，以 curl_cffi 繞過 Turnstile，0.5s 提取真實直鏈
     ├── 三層管道: 原生 yt-dlp (Tier 1) -> 靜態解包 (Tier 2) -> 增強型無頭嗅探 (Tier 3)
     ├── 動態增強: src/sniffer.py 注入 Stealth Webdriver 特徵遮蔽 + 自動點擊激活 preload="none"
     ├── 輕量化普惠: 輕量 Slim 容器與本機無 Playwright 環境直接支援 MissAV 等網站
     └── 專案規範: 版本升級至 v1.5.0，新增 11 項測試，測試案例達 72 項全數通過
+            │
+            ▼ (遭遇議題: Docker 容器內現代 FFmpeg 7 觸發 HLS 分段安全性阻擋與 Windows 掛載點路徑溢位)
+  [ v1.5.1 (2026-10-22) Docker 容器 HLS 分段安全性解復用與跨平台檔案系統相容性加固 ] ─── (當前版本)
+    ├── 解復用加固: FFmpeg 7+ 自動動態注入 -allowed_segment_extensions ALL 與 -extension_picky 0
+    ├── 索引重連修復: 針對 HLS 串流清單讀取排除 -reconnect_at_eof 1，杜絕 EOF 無限掛死循環
+    ├── 檔案系統防護: sanitize_filename 新增 UTF-8 位元組 (180 bytes) 截斷，根除 Win32 MAX_PATH 溢位
+    ├── 異常透明化: ProcessSupervisor 補齊 stderr 錯誤字串滾動緩衝區與即時診斷輸出
+    ├── 容器代理透傳: docker-compose.yml 補齊 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 環境變數
+    └── 專案規範: 版本升級至 v1.5.1，測試案例擴充至 76 項全數通過
 +-------------------------------------------------------------------------------+
 ```
 
 ---
 
 ## 2. 版本詳細異動清單 (Version Details)
+
+### [v1.5.1] - 2026-10-22
+
+#### 🎯 核心修訂主旨
+修復 Docker 容器內執行時連線異常中斷（Exit Code: 183 / 254）問題。深入排查定位出主機（舊版 FFmpeg 5）與容器（現代 FFmpeg 7）在 HLS demuxer 檢查策略之根本差異，實作動態 demuxer 旗標注入、索引 EOF 重連死鎖解除、Windows 容器掛載目錄長路徑溢位截斷防禦與代理透傳。
+
+#### 🚀 新增與修復明細 (Fixes & Features)
+1. **動態 HLS 解復用選項自適應相容 (`src/downloader.py`)**：
+   - 新增 `get_ffmpeg_hls_options()`，動態偵測安裝之 FFmpeg 版本所支援的選項。
+   - 對於 FFmpeg 6.1+/7+，自動在 HLS 輸入端注入 `-allowed_segment_extensions ALL`、`-extension_picky 0` 與 `-allowed_extensions ALL`，相容以 `.jpeg`、`.png` 等圖片偽裝分段的串流；對於 FFmpeg 5.x 則保持舊版向下相容。
+2. **HLS 索引清單 EOF 重連修復 (`src/downloader.py`)**：
+   - 針對 `.m3u8` 清單串流排除 `-reconnect_at_eof 1`，避免靜態清單下載完畢時被誤判為連線中斷而陷入無窮等待。
+3. **Win32 MAX_PATH 與容器掛載路徑長度安全截斷 (`src/utils.py`)**：
+   - `sanitize_filename` 預設字元長度降至 80，並追加 UTF-8 位元組長度上限檢驗（<= 180 bytes），徹底防止 Windows Docker Desktop 9p/virtiofs 掛載點發生 `[Errno 2] No such file or directory`。
+4. **Supervisor 錯誤診斷可視化 (`src/supervisor.py`)**：
+   - 保留 stderr 最近 20 行滾動緩衝區，在非零退出時直接印出 FFmpeg 關鍵錯誤片段，杜絕黑盒吞噬。
+5. **容器代理環境變數透傳 (`docker-compose.yml`)**：
+   - 配置 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及其小寫版本之環境變數自動繼承。
+
+---
 
 ### [v1.5.0] - 2026-10-22
 

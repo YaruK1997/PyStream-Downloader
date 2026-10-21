@@ -122,6 +122,8 @@ class ProcessSupervisor:
                     self._keyboard_thread = threading.Thread(target=self._listen_keyboard, daemon=True)
                     self._keyboard_thread.start()
 
+                recent_stderr_lines = []
+
                 # Read progress stream from stderr
                 for line in self.current_process.stderr:
                     if self._stop_requested:
@@ -129,6 +131,12 @@ class ProcessSupervisor:
                     prog = self.downloader.parse_progress(line)
                     if prog and on_progress:
                         on_progress(prog)
+                    else:
+                        clean_line = line.strip()
+                        if clean_line:
+                            recent_stderr_lines.append(clean_line)
+                            if len(recent_stderr_lines) > 20:
+                                recent_stderr_lines.pop(0)
 
                 ret_code = self.current_process.wait()
 
@@ -140,12 +148,21 @@ class ProcessSupervisor:
                 else:
                     # Non-zero return code indicates crash or network failure
                     retry_count += 1
+                    error_details = ""
+                    if recent_stderr_lines:
+                        err_sample = [
+                            l for l in recent_stderr_lines
+                            if not l.startswith("frame=") and not l.startswith("size=")
+                        ][-5:]
+                        if err_sample:
+                            error_details = "\n  FFmpeg 日誌片段:\n  " + "\n  ".join(err_sample)
+
                     if retry_count > self.max_retries:
-                        print(f"\n[Error] FFmpeg 異常退出 (Exit code: {ret_code})，已達最大重試次數 ({self.max_retries})。")
+                        print(f"\n[Error] FFmpeg 異常退出 (Exit code: {ret_code})，已達最大重試次數 ({self.max_retries})。{error_details}")
                         return False
 
                     backoff = min(30, 2 ** retry_count)
-                    print(f"\n[Retry] 下載異常中斷 (Exit code: {ret_code})，第 {retry_count}/{self.max_retries} 次重試，{backoff} 秒後重新連接...")
+                    print(f"\n[Retry] 下載異常中斷 (Exit code: {ret_code})，第 {retry_count}/{self.max_retries} 次重試，{backoff} 秒後重新連接...{error_details}")
                     time.sleep(backoff)
 
             except Exception as e:

@@ -8,10 +8,12 @@ import re
 import shutil
 
 
-def sanitize_filename(name: str, max_length: int = 200) -> str:
+def sanitize_filename(name: str, max_length: int = 80) -> str:
     """Sanitize a string for safe usage as a file name across Windows, Linux, and macOS.
 
     Removes invalid characters: \\ / : * ? " < > |
+    Caps character and byte length to stay well within OS and filesystem boundaries
+    (e.g., Windows MAX_PATH 260 limit on Docker Desktop 9p/virtiofs mounts).
     """
     if not name:
         return "downloaded_video"
@@ -31,9 +33,13 @@ def sanitize_filename(name: str, max_length: int = 200) -> str:
     if not sanitized:
         sanitized = "downloaded_video"
 
-    # Limit length
+    # Limit character length
     if len(sanitized) > max_length:
         sanitized = sanitized[:max_length].rstrip(". ")
+
+    # Ensure UTF-8 byte length does not exceed 180 bytes (prevents MAX_PATH overflows on CJK strings)
+    while len(sanitized.encode("utf-8")) > 180 and len(sanitized) > 10:
+        sanitized = sanitized[:-1].rstrip(". ")
 
     return sanitized
 
