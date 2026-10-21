@@ -26,6 +26,7 @@
     └── 專案規範: CLI --version 支援、測試案例擴充至 41 項全數通過
             │
             ▼ (遭遇議題: 動態 JS 混淆站點觸發 Unsupported URL)
+  [ v1.2.0 (2026-10-21) 無頭瀏覽器動態串流嗅探升級 ]
     ├── 方案 A 實作: 整合 Playwright 無頭 Chromium 瀏覽器
     ├── 核心功能: 網路層即時攔截 (.m3u8 / .mpd)，抽取 Master Playlist 與即時 Headers
     ├── 智慧回退: yt-dlp 遇 Unsupported URL 時自動接軌嗅探器，無縫串接畫質選擇
