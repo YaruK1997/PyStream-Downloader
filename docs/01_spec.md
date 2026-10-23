@@ -1,0 +1,240 @@
+# Python + FFmpeg 智慧串流下載工具 (PyStream-Downloader) 需求規格說明書 (PRD / Spec)
+
+本文件依據 `workflow.md` 階段 1（需求明確化 / 最佳化）之規範制定，定義整合 `yt-dlp`、`FFmpeg` 與 Python 守護進程之影音串流下載工具核心架構、功能邊界與驗收標準。
+
+---
+
+## 1. 系統架構與流程圖 (System Architecture ASCII)
+
+```text
++-------------------------------------------------------------------------------+
+|                 PyStream-Downloader 系統資料流與狀態轉移架構                    |
++-------------------------------------------------------------------------------+
+
+                 [ 使用者輸入: 串流/影片網址 (URL) + CLI 參數 ]
+                                       │
+                                       ▼
+       +---------------------------------------------------------------+
+       | 模組 1: 開播監聽器 (Live Stream Watcher)                        |
+       | - 探測串流狀態: [即時串流 / 預排首播 Upcoming / 離線 Offline]     |
+       | - 若為未開播: 啟動定時輪詢 (預設 15s 倒數)，直到偵測到串流訊號   |
+       +---------------------------------------------------------------+
+                                       │ (串流正式開播 / 一般點播影片)
+                                       ▼
+       +---------------------------------------------------------------+
+       | 模組 2: 格式解析與畫質選擇器 (Quality Selector)                 |
+       | - 調用 yt-dlp 提取可用 Formats (解析度、碼率、音訊編碼、容器格式) |
+       | - 互動模式: 終端印出格式選單供輸入編號選擇                      |
+       | - 靜默模式: 依 CLI `--quality` 或預設最優 (best) 自動匹配        |
+       +---------------------------------------------------------------+
+                                       │ (解析出目標串流直連 URL)
+                                       ▼
+       +---------------------------------------------------------------+
+       | 模組 3: 下載守護與控制引擎 (Supervisor & Downloader)            |
+       |                                                               |
+       | [主執行緒 / 背景監控]              [子進程 FFmpeg Worker]      |
+       | - 鍵盤監聽 (Space / 'p' 鍵)        - 參數: -reconnect 1        |
+       |   調用 psutil 凍結/喚醒進程              -reconnect_streamed 1 |
+       | - 監控進程 exit code                    -reconnect_delay_max 10|
+       | - 異常中斷觸發斷點重連 (最多 5 次)      -c copy -f mp4 ...     |
+       +---------------------------------------------------------------+
+                                       │ (下載完成 / 使用者結束)
+                                       ▼
+       +---------------------------------------------------------------+
+       | 模組 4: 檔案整合與輸出檢驗 (File Finalizer)                    |
+       | - 檢查輸出檔案完整性 (MOOV Atom / 檔案大小 > 0)                |
+       | - 檔名清理 (過濾非法字元) 並保存至指定目錄                      |
+       +---------------------------------------------------------------+
+                                       │
+                                       ▼
+                           [ 本地成品影片 (.mp4) ]
++-------------------------------------------------------------------------------+
+```
+
+---
+
+## 2. 核心功能規格詳細說明
+
+### F1. 開播監聽模組 (Wait-for-Live Stream Watcher)
+- **目標場景**：鎖定尚未開始的 YouTube 直播或即時串流，自動在背景等候，無須人工反覆刷新。
+- **核心行為**：
+  1. 輸入 URL 後，先以 `yt-dlp --dump-json` 或 Python API 探測來源 `live_status`。
+  2. 若狀態為 `is_upcoming` 或 `post_live` 或取得 HTTP 404/串流離線：
+     - 提示：「串流尚未開始，已啟動開播監聽...」
+     - 啟動非阻塞輪詢計時器（間隔預設 15 秒，可由 `--poll-interval` 自訂）。
+     - 終端輸出動態倒數與重試次數，避免使用者誤判卡死。
+  3. 一旦檢測到 `is_live` 或 Master Playlist 可正常下載，立即發出提示音（可選）並無縫切入 **F2**。
+
+### F2. 格式解析與畫質選擇器 (Format & Quality Inspector)
+- **目標場景**：支援使用者依網路狀況或儲存空間自由選擇畫質。
+- **核心行為**：
+  1. 利用 `yt-dlp` 解析來源所提供的完整 format 清單。
+  2. **過濾與排序**：按解析度（1080p、720p、480p 等）及視頻編碼排序，剔除僅音訊或無效格式（但支援單獨音訊提取選項）。
+  3. **互動選單**：若使用者未傳入 `--quality`，在終端條列：
+     ```text
+     [0] Best Quality (自動選擇最高畫質 + 最佳音軌)
+     [1] 1080p (1920x1080, avc1, ~4500k)
+     [2] 720p  (1280x720,  avc1, ~2500k)
+     [3] 480p  (854x480,   avc1, ~1000k)
+     請輸入畫質選項 [0-3] (預設 0):
+     ```
+  4. 解析出最佳之視訊/音訊流網址（如 HLS m3u8 URL 或直連 CDN URL）。
+
+### F3. 下載守護引擎 (Downloader Engine & FFmpeg Worker)
+- **目標場景**：以最低 CPU/記憶體消耗錄製串流，不進行二次轉碼（Remux Only）。
+- **FFmpeg 核心參數**：
+  ```bash
+  ffmpeg -y \
+    -reconnect 1 \
+    -reconnect_at_eof 1 \
+    -reconnect_streamed 1 \
+    -reconnect_delay_max 10 \
+    -i "<TARGET_STREAM_URL>" \
+    -c copy \
+    -bsf:a aac_adtstoasc \
+    -movflags +faststart \
+    "<OUTPUT_PATH>.mp4"
+  ```
+- **進度回饋**：解析 FFmpeg stderr 之 `time=... bitrate=... speed=...` 格式日誌，於終端以單行刷新顯示目前下載時長與檔案累積大小。
+
+### F4. 斷線重試與斷點續傳機制 (Disconnection Retry & Auto-Recovery)
+- **雙層容錯架構**：
+  - **第一層 (FFmpeg 原生)**：配置 `-reconnect_streamed 1 -reconnect_delay_max 10`，因應短暫封包遺失或小於 10 秒之網路震盪，FFmpeg 自行恢復。
+  - **第二層 (Python 守護進程)**：
+    - 若網路中斷超時導致 FFmpeg 子進程異常退出（exit code != 0 且非使用者主動中止）：
+    - Python 守護進程捕獲異常，保留已下載之暫存檔 `<filename>.part.mp4`。
+    - 取得目前已寫入時間戳，自動重新呼叫 `yt-dlp` 更新可能已過期之 Token/CDN URL。
+    - 重新調度 FFmpeg 連接續傳，最多重試 5 次（指數退避：2s, 4s, 8s, 16s, 30s）。
+
+### F5. 串流暫停 / 恢復機制 (Process Freeze / Resume)
+- **目標場景**：下載進行中臨時需要釋放頻寬或 CPU，能瞬間凍結下載而不斷線損壞檔案。
+- **核心實作**：
+  - 使用 Python `psutil` 庫控制 FFmpeg 子進程：
+    - 暫停：`psutil.Process(ffmpeg_pid).suspend()`
+    - 恢復：`psutil.Process(ffmpeg_pid).resume()`
+  - **熱鍵觸發**：監聽鍵盤輸入（`p` 鍵或 `Space` 空白鍵）。
+  - **狀態提示**：終端進度條切換為黃色標籤 `[PAUSED - 按 'p' 或空白鍵繼續]`，恢復時變更為綠色 `[DOWNLOADING]`。
+
+### F6. Cloudflare 反爬蟲繞過機制與瀏覽器指紋偽裝 (Anti-Bot Bypass & Impersonation - v1.1.0 新增)
+- **目標場景**：目標串流網站掛載 Cloudflare WAF / Anti-Bot 防禦時，防止 yt-dlp 通用解析器觸發 HTTP 403 Forbidden 挑戰。
+- **核心實作**：
+  1. **TLS / HTTP2 網路指紋偽裝**：整合 `curl_cffi`，透過 `yt_dlp.networking.impersonate.ImpersonateTarget` 模擬真實桌面瀏覽器（預設 `chrome`，亦支援 `firefox`、`safari`、`edge`）。
+  2. **Generic Extractor 參數注入**：自動注入 `--extractor-args "generic:impersonate=<target>"`，確保第三方網頁提取串流時通過 Cloudflare 被動式驗證。
+  3. **本機瀏覽器 Cookies 連動**：支援 `--cookies-from-browser`，自動讀取指定瀏覽器之安全憑證（如 `cf_clearance`），因應主動式 JavaScript 挑戰。
+  4. **Downloader HTTP Headers 貫穿**：將 yt-dlp 解析出的 HTTP Request Headers（含 User-Agent、Referer、Cookie）貫穿傳遞至 FFmpeg 下載指令之 `-headers`，杜絕 TS / m4s 媒體分片取片階段之 403 連線拒絕。
+  5. **安全防護防禦**：對傳入 FFmpeg 之標頭鍵值實施嚴格 CRLF 注入過濾，防止標頭走私或非預期命令注入。
+
+### F7. 無頭瀏覽器動態串流嗅探引擎 (Headless Stream Sniffer / The Stream Detector Engine - v1.2.0 新增)
+- **目標場景**：針對未被 yt-dlp 原生支援、且使用前端 JavaScript 動態混淆加密（如 MissAV 的 Dean Edwards packer、動態載入 HLS/DASH 播放器）的各類影音網站。
+- **核心實作**：
+  1. **自動回退與動態探測 (The Stream Detector 原理)**：整合 `Playwright` 無頭 Chromium 瀏覽器，於 yt-dlp 判定為 `Unsupported URL` 或直接指定 `--sniff` 時自動啟動。
+  2. **網路層即時監聽 (Request Interception)**：監聽瀏覽器核心之所有網路請求（`page.on("request")`），精準攔截 `.m3u8`、`.mpd` 等影音串流清單網址與即時請求標頭（User-Agent, Referer, Cookies）。
+  3. **無縫串接下載管線**：嗅探成功後自動擷取 Master Playlist，交由 `StreamExtractor` 與 `FFmpegDownloader` 進行解析度過濾與斷線守護下載。
+  4. **優雅降級保護**：若環境未安裝 `playwright` 或瀏覽器核心，提供友善之安裝提示（`playwright install chromium`），不阻斷一般標準解析流程。
+  5. **CDP 瀏覽器語系模擬與防禦降級 (v1.4.1 修訂)**：Playwright `locale` 採嚴格單一 BCP 47 語言標籤（如 `"zh-TW"`），避免 Chromium DevTools Protocol (CDP) `Emulation.setLocaleOverride` 拋出 `Invalid locale name` 錯誤；多語系權重清單轉置至 `extra_http_headers` 之 `Accept-Language`，並配置 CDP 語系異常自動降級回退機制。
+
+### F8. 雙軌容器自適應晉升架構與 Exit Code 42 協議 (Dual-Tier Auto-Escalation Protocol - v1.3.0 新增)
+- **目標場景**：兼顧容器極致輕量化（420MB）與動態嗅探通用性（通殺前端 JS 混淆），且使用者「完全無感、無需手動切換參數」。
+- **核心實作**：
+  1. **多階段容器構建 (Multi-Stage Docker Targets)**：
+     - `slim` (預設標籤)：僅包含 Python 3.10 + FFmpeg + yt-dlp + curl_cffi（體積約 420MB，建置僅需 40 秒）。
+     - `full` (完整標籤)：以 `slim` 為基底，增量安裝 Playwright 與完整 Chromium 瀏覽器（配置 `shm_size: 2gb`）。
+  2. **狀態碼晉升協議 (Exit Code 42 Protocol)**：
+     - 若在輕量容器 `downloader` 中執行，當 `StreamExtractor` 判定目標網頁必須依賴無頭瀏覽器，但環境缺乏 Chromium 時，拋出約定之信號代碼 `sys.exit(42)`。
+  3. **智慧調度腳本 (Smart Dispatcher in deploy.sh / deploy.ps1)**：
+     - 外層啟動腳本自動監聽容器退出狀態碼：
+       - 若正常結束（Exit Code 0）或一般錯誤（Code 1），正常退出。
+       - 若捕獲狀態碼 `42`，腳本立即在控制台顯示提示訊息，並自動升級以 `docker-compose --profile full run --rm downloader-full` 重新調度任務，全程無須使用者干預。
+
+
+### F9. 獨立音軌識別、雙串流混流與音畫時間戳同步機制 (Separate Audio Extraction, Dual-Stream Multiplexing & A/V Sync - v1.4.0 新增)
+- **目標場景**：YouTube 1080p/2K/4K 等高畫質串流及 DASH 格式網站，普遍將高畫質視訊軌 (codec == \'none\') 與音訊軌分離儲存。若僅下載視訊直鏈將導致成品影片無聲音或音畫不同步。
+- **核心實作**：
+  1. **最佳音軌自動探測 (Best Audio Matching)**：
+     - StreamExtractor 自動篩選無視訊之獨立音訊軌 (codec in (\'none\', None, \'\'), codec not in (\'none\', None, \'\'))。
+     - 容器格式相容性優先：針對 MP4 輸出，優先挑選 AAC/m4a 原生音訊軌（如 YouTube 140 軌，避開 -drc 動態範圍壓縮軌），次選高碼率音訊軌（如 Opus/WebM 251 軌）。
+  2. **雙輸入串流安全傳遞 (Dual Input Piping)**：
+     - 若選定畫質為分離軌道，
+esolve_stream_details() 封裝 StreamDetails 同步回傳視訊與音訊之 CDN 直鏈及各自專屬之 HTTP Request Headers，並保持 3-Tuple 解構之向下相容性。
+  3. **FFmpeg 雙流混流與時間戳嚴格同步 (FFmpeg Remuxing & A/V Sync)**：
+     - 指令結構：-i <VIDEO_URL> -i <AUDIO_URL> -map 0:v:0 -map 1:a:0。
+     - 視訊保持無損複製：-c:v copy。
+     - 音訊相容性自適應：若音軌為 AAC 則原生串流複製 (-c:a copy -bsf:a aac_adtstoasc)；若為 Opus/Vorbis 且輸出至 MP4，則自動啟動輕量轉碼 (-c:a aac -b:a 192k) 並啟用音訊重採樣同步 (-af aresample=async=1:first_pts=0)。
+     - 時間戳平移與交錯佇列保護：配置 -fflags +genpts -avoid_negative_ts make_zero -max_interleave_delta 0 -shortest，徹底消除起始 PTS 偏差、封包交錯佇列溢位與結尾畫面凍結問題。
+
+### F10. 靜態混淆解包嗅探器 (Static Packer Sniffer / Dean Edwards Unpacker - v1.5.0 新增)
+- **目標場景**：MissAV 等影音網站採用 Dean Edwards Packer (`eval(function(p,a,c,k,e,d)...)`) 在前端混淆真正的 CDN 串流直鏈 (`https://surrit.com/[UUID]/playlist.m3u8`)，且前端常掛載 Cloudflare Turnstile 人機驗證，傳統無頭瀏覽器易遭阻擋。
+- **核心實作**：
+  1. **純演算法靜態解包**：在 `src/packer.py` 實作任意進制（Base 10 至 Base 62）符號映射與單趟代碼重構，於 0.01 秒內靜態還原真實串流清單與畫質節點。
+  2. **TLS 指紋穿透抓取**：在 `src/static_sniffer.py` 結合 `curl_cffi` 偽裝 Chrome 120 網路指紋，繞過 Cloudflare WAF，自動萃取 OG Title / Title Tag，並綁定原站 `Referer` 與 `Origin` 防盜鏈標頭。
+  3. **極致輕量**：在輕量環境或 Docker 輕量鏡像中無需安裝 Playwright / Chromium 即可完整解析此類網站。
+
+### F11. 增強型無頭動態嗅探與播放器激活 (Enhanced Dynamic Sniffer & Auto-Play - v1.5.0 新增)
+- **目標場景**：針對未混淆但具備延遲加載 (`preload="none"`)、需手動點擊 Play、或具備反自動化檢測特徵之動態網站。
+- **核心實作**：
+  1. **Stealth 反檢測特徵遮蔽**：頁面啟動時自動注入 `Object.defineProperty(navigator, 'webdriver', {get: () => undefined})`，降低自動化特徵。
+  2. **延遲播放器自動激活**：頁面加載後自動調用 `video.play()` 並點擊常見播放控制項（如 `.plyr__control--overlaid`、`.player`、`video`），強制激活 Hls.js 發送串流請求。
+---
+
+## 3. CLI 介面與參數設計 (Command Line Interface)
+
+```text
+使用範例：
+  python main.py <URL> [OPTIONS]
+
+選項說明：
+  <URL>                                目標影片或直播網址（必填）
+  -q, --quality <QUALITY>              指定畫質 (例如: 1080p, 720p, best) [預設: 互動選擇]
+  -o, --output <DIR>                   指定儲存目錄 [預設: ./downloads]
+  --wait                               啟用開播監聽模式（若未開播則自動等待）
+  --poll-interval <SEC>                開播監聽輪詢間隔秒數 [預設: 15]
+  --max-retries <NUM>                  下載斷線最大重試次數 [預設: 5]
+  --no-pause                           停用鍵盤熱鍵監聽（適用於背景無頭模式運行）
+  --impersonate <BROWSER>              啟用瀏覽器網路指紋偽裝 (預設: chrome，設為 none 關閉)
+  --cookies-from-browser <BROWSER>     從指定瀏覽器讀取 Cookies (chrome/firefox/edge/safari)
+  --sniff <MODE>                       無頭瀏覽器動態嗅探模式 (auto/always/never，預設: auto)
+  --sniff-timeout <SEC>                動態串流嗅探最長等待秒數 (預設: 15)
+```
+
+---
+
+## 4. 模組職責拆解與介面約定 (Module Architecture)
+
+| 模組檔案 | 核心類別 / 函數 | 職責定義 |
+| :--- | :--- | :--- |
+| `src/packer.py` | 純演算法解包模組 | Dean Edwards Packer 解包、Base 10~62 符號解析與 m3u8 串流提取。 |
+| `src/static_sniffer.py` | `StaticPackerSniffer` | 結合 `curl_cffi` TLS 指紋穿透與靜態解包，免疫 Cloudflare Turnstile。 |
+| `src/sniffer.py` | `HeadlessStreamSniffer` | 基於 Playwright 攔截動態網頁請求，具備 Stealth 特徵遮蔽與播放器點擊激活。 |
+| `src/watcher.py` | `StreamWatcher` | 負責探測串流狀態 (`is_live`)，支援 Impersonate 與 Cookies 輪詢防 403。 |
+| `src/extractor.py` | `StreamExtractor` | 包裝 `yt-dlp`，支援瀏覽器指紋偽裝，整合 Sniffer 自動回退、畫質解析與標頭抽取。 |
+| `src/downloader.py` | `FFmpegDownloader` | 封裝 FFmpeg 進程、注入安全 HTTP Headers、進程隔離與進度回報。 |
+| `src/supervisor.py` | `ProcessSupervisor` | 負責進程生命週期管理、崩潰自動重啟、以及調用 `psutil` 執行 suspend/resume。 |
+| `src/utils.py` | 工具函數群 | 檔名安全清理、MP4 完整性校驗、外部依賴、`curl_cffi` 與 `playwright` 檢測。 |
+| `src/cli.py` | `run_app()` | 參數解析（`argparse`）、選單呈現、版本回報、動態嗅探與反爬蟲協調。 |
+
+---
+
+## 5. 異常處理與邊界測試矩陣 (Edge Cases)
+
+| 異常情境 (Edge Case) | 系統預期防禦行為 |
+| :--- | :--- |
+| **目標網站為 yt-dlp 不支援且包含 JS Packer 混淆** | 優先觸發 Tier 2 `StaticPackerSniffer` 演算法解包，0.5s 內取得直鏈，避開 Cloudflare。 |
+| **目標網站具備延遲加載 (`preload="none"`) 播放器** | Tier 3 動態嗅探器自動調用 `video.play()` 與模擬點擊激活 Hls.js 串流請求。 |
+| **目標網站為 yt-dlp 不支援且非靜態混淆** | 自動調用 `HeadlessStreamSniffer` (Playwright) 增強型動態嗅探 `.m3u8` / `.mpd` 串流直鏈與 Headers。 |
+| **環境未安裝 Playwright 或 Chromium 瀏覽器** | 若在輕量容器中則觸發 Exit Code 42 自動升級至 full 容器；本機環境則提供友善安裝指引。 |
+| **目標網站觸發 Cloudflare 403** | 預設啟用 `impersonate=chrome` 與 `curl_cffi` 模擬瀏覽器 TLS 指紋；未安裝時主動警告引導安裝。 |
+| **HTTP 標頭存在 CRLF 注入嘗試** | `FFmpegDownloader` 檢驗標頭鍵值，發現 `\r` 或 `\n` 立即引發 `ValueError` 阻斷。 |
+| **系統未安裝 ffmpeg / ffprobe** | 啟動時即刻檢查 `shutil.which('ffmpeg')`，若缺失則印出明確安裝指引並優雅退出（Exit 1）。 |
+| **目標串流開播前被創作者取消** | 輪詢期間若偵測到影片狀態轉為 `private`、`deleted` 或 `rejected`，主動終止監聽並發出告警。 |
+| **影片標題包含作業系統非法字元** | 檔名自動調用安全清理函數，過濾 `\ / : * ? " < > \|` 等字元，防止磁碟寫入崩潰。 |
+| **硬碟空間不足** | 下載前及下載中定時檢查磁碟可用容量，低於 500MB 時主動停止下載並保留現存檔案。 |
+| **使用者強制發送 Ctrl+C** | 捕獲 `SIGINT`，向 FFmpeg 發送 `q` 正常結束信號以閉合 MP4 檔案頭（MOOV），確保已下載部分可正常播放。 |
+
+---
+
+## 6. 階段 1 交付檢核表 (Stage 1 Sign-Off Checklist)
+
+- [x] 功能範圍已定義明確（Wait-for-Live + Quality Select + FFmpeg Copy + Retry + Suspend）。
+- [x] 無任何未解之 TBD 或模糊待辦項。
+- [x] 介面參數與模組分工已解耦（5 大獨立模組）。
+- [x] 符合 `workflow.md` 規範，具備完善的邊界異常防禦機制。

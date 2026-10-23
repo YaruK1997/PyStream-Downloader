@@ -1,0 +1,108 @@
+"""Utility functions for PyStream-Downloader.
+
+Includes filename sanitization, dependency checking, and MP4 container verification.
+"""
+
+import os
+import re
+import shutil
+
+
+def sanitize_filename(name: str, max_length: int = 80) -> str:
+    """Sanitize a string for safe usage as a file name across Windows, Linux, and macOS.
+
+    Removes invalid characters: \\ / : * ? " < > |
+    Caps character and byte length to stay well within OS and filesystem boundaries
+    (e.g., Windows MAX_PATH 260 limit on Docker Desktop 9p/virtiofs mounts).
+    """
+    if not name:
+        return "downloaded_video"
+
+    # Replace forbidden characters with underscore
+    sanitized = re.sub(r'[\\/*?:"<>|]', "_", name)
+    # Replace whitespace and control characters with single space
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+
+    # If only separators or underscores remain, fallback
+    if not re.sub(r"[._\-\s]", "", sanitized):
+        return "downloaded_video"
+
+    # Remove leading/trailing dots or spaces (invalid on Windows)
+    sanitized = sanitized.strip(". ")
+
+    if not sanitized:
+        sanitized = "downloaded_video"
+
+    # Limit character length
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length].rstrip(". ")
+
+    # Ensure UTF-8 byte length does not exceed 180 bytes (prevents MAX_PATH overflows on CJK strings)
+    while len(sanitized.encode("utf-8")) > 180 and len(sanitized) > 10:
+        sanitized = sanitized[:-1].rstrip(". ")
+
+    return sanitized
+
+
+def verify_mp4_integrity(filepath: str) -> bool:
+    """Verify that an MP4 file exists, is not empty, and has basic valid structure.
+
+    Checks for presence of standard MP4 box identifiers ('ftyp', 'moov', or 'mdat').
+    """
+    if not os.path.exists(filepath):
+        return False
+
+    size = os.path.getsize(filepath)
+    if size < 32:  # An MP4 header must be at least 24-32 bytes
+        return False
+
+    try:
+        with open(filepath, "rb") as f:
+            header = f.read(4096)
+            # Check for common MP4 brand/box markers
+            markers = [b"ftyp", b"moov", b"mdat", b"isom", b"mp42"]
+            if any(marker in header for marker in markers):
+                return True
+
+            # If not in first 4096 bytes (e.g. large file with trailing moov), read end of file
+            if size > 4096:
+                f.seek(max(0, size - 4096))
+                tail = f.read(4096)
+                if b"moov" in tail:
+                    return True
+
+            return False
+    except (OSError, IOError):
+        return False
+
+
+def check_impersonate_support() -> bool:
+    """Check if curl_cffi and yt-dlp impersonation features are available."""
+    try:
+        import curl_cffi  # noqa: F401
+        from yt_dlp.networking.impersonate import ImpersonateTarget  # noqa: F401
+        return True
+    except (ImportError, Exception):
+        return False
+
+
+def check_playwright_support() -> bool:
+    """Check if playwright and chromium executable are available."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            # Check if chromium executable exists
+            executable = p.chromium.executable_path
+            return os.path.exists(executable) if executable else False
+    except (ImportError, Exception):
+        return False
+
+
+def check_system_dependencies() -> dict[str, bool]:
+    """Check availability of external tools and core packages."""
+    return {
+        "ffmpeg": shutil.which("ffmpeg") is not None,
+        "ffprobe": shutil.which("ffprobe") is not None,
+        "impersonate": check_impersonate_support(),
+        "playwright": check_playwright_support(),
+    }
