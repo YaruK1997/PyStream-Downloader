@@ -1,7 +1,7 @@
 # ==============================================================
 # Target 1: slim (預設輕量版 ~420MB，適合 90% YouTube/Twitch/標準串流)
 # ==============================================================
-FROM python:3.10-slim AS slim
+FROM python:3.15-slim AS slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

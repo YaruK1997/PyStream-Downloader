@@ -222,3 +222,5 @@ __marimo__/
 #SSH Key
 PyStream
 PyStream.pub
+# Local Scratch & Test Logs
+.scratch/
