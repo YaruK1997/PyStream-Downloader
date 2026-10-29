@@ -219,8 +219,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-#SSH Key
-PyStream
-PyStream.pub
 # Local Scratch & Test Logs
 .scratch/
