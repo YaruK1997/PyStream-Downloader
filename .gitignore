@@ -221,3 +221,6 @@ __marimo__/
 
 # Local Scratch & Test Logs
 .scratch/
+ 
+ # Workflow
+workflow.md
